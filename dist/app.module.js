@@ -42,23 +42,27 @@ exports.AppModule = AppModule = __decorate([
                 imports: [config_1.ConfigModule],
                 inject: [config_1.ConfigService],
                 useFactory: (configService) => {
-                    const host = configService.get('DB_HOST', '127.0.0.1');
-                    const dbSsl = configService.get('DB_SSL');
+                    const isVercel = Boolean(process.env.VERCEL);
+                    const host = configService.get('DB_HOST', isVercel ? 'gateway01.eu-central-1.prod.aws.tidbcloud.com' : '127.0.0.1');
+                    const dbPort = Number(configService.get('DB_PORT', isVercel || host.includes('tidbcloud.com') ? 4000 : 3304));
+                    const dbUser = configService.get('DB_USERNAME', isVercel || host.includes('tidbcloud.com') ? '4AjRseKqFzqFjBd.root' : 'root');
+                    const dbPass = configService.get('DB_PASSWORD', isVercel || host.includes('tidbcloud.com') ? 'yiyeZtirfIBFl1cV' : '');
+                    const dbName = configService.get('DB_DATABASE', isVercel || host.includes('tidbcloud.com') ? 'test' : 'slasel');
                     const isTiDB = host.includes('tidbcloud.com');
-                    const useSsl = dbSsl === 'true' || isTiDB;
+                    const useSsl = configService.get('DB_SSL') === 'true' || isTiDB;
                     return {
                         type: 'mysql',
                         host,
-                        port: Number(configService.get('DB_PORT', 3304)),
-                        username: configService.get('DB_USERNAME', 'root'),
-                        password: configService.get('DB_PASSWORD', ''),
-                        database: configService.get('DB_DATABASE', 'slasel'),
+                        port: dbPort,
+                        username: dbUser,
+                        password: dbPass,
+                        database: dbName,
                         autoLoadEntities: true,
-                        synchronize: configService.get('DB_SYNCHRONIZE', isTiDB ? 'false' : 'true') === 'true',
+                        synchronize: false,
                         logging: false,
                         ssl: useSsl ? { minVersion: 'TLSv1.2', rejectUnauthorized: true } : false,
                         extra: {
-                            connectionLimit: 20,
+                            connectionLimit: isVercel ? 5 : 20,
                             waitForConnections: true,
                             queueLimit: 0,
                             enableKeepAlive: true,
