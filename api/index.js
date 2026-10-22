@@ -1,3 +1,10 @@
+require('reflect-metadata');
+
+// Ensure Vercel NFT bundles database drivers
+try {
+  require('mysql2');
+} catch (_) {}
+
 let AppModule;
 let loadError = null;
 

@@ -2,7 +2,7 @@
   "version": 2,
   "framework": null,
   "buildCommand": "",
-  "installCommand": "npm install --omit=dev",
+  "installCommand": "npm install --omit=dev --no-package-lock",
   "functions": {
     "api/index.js": {
       "includeFiles": "dist/**",
