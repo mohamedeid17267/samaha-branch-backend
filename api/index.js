@@ -2,8 +2,21 @@ const { NestFactory } = require('@nestjs/core');
 const { ExpressAdapter } = require('@nestjs/platform-express');
 const { ValidationPipe } = require('@nestjs/common');
 const express = require('express');
+const mysql = require('mysql2/promise');
 
 const expressApp = express();
+
+// Handle body parsing safely without hanging on Vercel stream
+expressApp.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    return next();
+  }
+  express.json()(req, res, (err) => {
+    if (err) return next(err);
+    express.urlencoded({ extended: true })(req, res, next);
+  });
+});
+
 let isReady = false;
 let initPromise = null;
 
@@ -26,6 +39,7 @@ async function bootstrap() {
     const app = await NestFactory.create(
       AppModule,
       new ExpressAdapter(expressApp),
+      { bodyParser: false },
     );
 
     app.useGlobalPipes(
@@ -74,12 +88,49 @@ module.exports = async (req, res) => {
     return res.status(200).end();
   }
 
-  // Restore path if Vercel rewrite changed req.url
-  if (
-    req.headers['x-matched-path'] &&
-    (req.url === '/api' || req.url === '/api/')
-  ) {
-    req.url = req.headers['x-matched-path'];
+  // Diagnostics: Instant debug response
+  if (req.url && req.url.includes('debug=1')) {
+    return res.status(200).json({
+      status: 'ok',
+      url: req.url,
+      method: req.method,
+      headers: req.headers,
+      body: req.body,
+    });
+  }
+
+  // Diagnostics: Instant database connection test
+  if (req.url && req.url.includes('test-db=1')) {
+    try {
+      const conn = await mysql.createConnection({
+        host: 'gateway01.eu-central-1.prod.aws.tidbcloud.com',
+        port: 4000,
+        user: '4AjRseKqFzqFjBd.root',
+        password: 'yiyeZtirfIBFl1cV',
+        database: 'test',
+        ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
+        connectTimeout: 5000,
+      });
+      const [rows] = await conn.execute('SELECT 1 as test');
+      await conn.end();
+      return res.status(200).json({ dbConnected: true, rows });
+    } catch (err) {
+      return res.status(500).json({
+        dbConnected: false,
+        error: err.message,
+        code: err.code,
+      });
+    }
+  }
+
+  // Route URL restoration
+  const realPath =
+    req.headers['x-matched-path'] ||
+    req.headers['x-vercel-matched-path'] ||
+    req.url;
+
+  if (realPath && realPath !== '/api' && !realPath.startsWith('/api?')) {
+    req.url = realPath;
   }
 
   try {
