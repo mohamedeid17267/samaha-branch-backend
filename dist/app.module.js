@@ -36,13 +36,15 @@ exports.AppModule = AppModule = __decorate([
                 isGlobal: true,
                 envFilePath: '.env',
             }),
-            schedule_1.ScheduleModule.forRoot(),
+            ...(Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV)
+                ? []
+                : [schedule_1.ScheduleModule.forRoot()]),
             common_module_1.CommonModule,
             typeorm_1.TypeOrmModule.forRootAsync({
                 imports: [config_1.ConfigModule],
                 inject: [config_1.ConfigService],
                 useFactory: (configService) => {
-                    const isVercel = Boolean(process.env.VERCEL);
+                    const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
                     const host = configService.get('DB_HOST', isVercel ? 'gateway01.eu-central-1.prod.aws.tidbcloud.com' : '127.0.0.1');
                     const dbPort = Number(configService.get('DB_PORT', isVercel || host.includes('tidbcloud.com') ? 4000 : 3304));
                     const dbUser = configService.get('DB_USERNAME', isVercel || host.includes('tidbcloud.com') ? '4AjRseKqFzqFjBd.root' : 'root');

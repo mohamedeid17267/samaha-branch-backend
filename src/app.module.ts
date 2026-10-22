@@ -29,8 +29,10 @@ import { CommonModule } from './common/common.module';
       envFilePath: '.env',
     }),
 
-    // Schedule Module
-    ScheduleModule.forRoot(),
+    // Schedule Module (disabled in serverless Vercel environment)
+    ...(Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV)
+      ? []
+      : [ScheduleModule.forRoot()]),
 
     // Shared global caching and utilities
     CommonModule,
@@ -40,7 +42,8 @@ import { CommonModule } from './common/common.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const isVercel = Boolean(process.env.VERCEL);
+        const isVercel =
+          Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
         const host = configService.get<string>(
           'DB_HOST',
           isVercel ? 'gateway01.eu-central-1.prod.aws.tidbcloud.com' : '127.0.0.1'
