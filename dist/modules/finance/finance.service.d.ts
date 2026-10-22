@@ -1,0 +1,76 @@
+import { OnApplicationBootstrap } from '@nestjs/common';
+import { Repository, DataSource } from 'typeorm';
+import { BrandRoyaltyLedger } from '../../database/entities/brand-royalty-ledger.entity';
+import { InventoryDebtLedger } from '../../database/entities/inventory-debt-ledger.entity';
+import { CustomerDebtLedger } from '../../database/entities/customer-debt-ledger.entity';
+import { Branch } from '../../database/entities/branch.entity';
+import { RecordPaymentDto } from './dto/record-payment.dto';
+import { RecordChargeDto } from './dto/record-charge.dto';
+import { ActivityService } from '../activity/activity.service';
+import { Liability } from '../../database/entities/liability.entity';
+import { BranchExpense } from '../../database/entities/branch-expense.entity';
+import { BranchDailyRevenue } from '../../database/entities/branch-daily-revenue.entity';
+import { MemoryCacheService } from '../../common/services/cache.service';
+export declare class FinanceService implements OnApplicationBootstrap {
+    private royaltyRepository;
+    private debtRepository;
+    private customerLedgerRepository;
+    private branchRepository;
+    private liabilityRepository;
+    private branchExpenseRepository;
+    private branchDailyRevenueRepository;
+    private dataSource;
+    private activityService;
+    private cacheService;
+    recalculateLedger(ledgerType: 'ROYALTY' | 'INVENTORY_DEBT' | 'CUSTOMER_DEBT', idParam: number): Promise<void>;
+    updatePayment(ledgerType: 'ROYALTY' | 'INVENTORY_DEBT' | 'CUSTOMER_DEBT', paymentId: number, dto: any, username: string): Promise<void>;
+    deletePayment(ledgerType: 'ROYALTY' | 'INVENTORY_DEBT' | 'CUSTOMER_DEBT', paymentId: number, username: string): Promise<void>;
+    private readonly logger;
+    constructor(royaltyRepository: Repository<BrandRoyaltyLedger>, debtRepository: Repository<InventoryDebtLedger>, customerLedgerRepository: Repository<CustomerDebtLedger>, branchRepository: Repository<Branch>, liabilityRepository: Repository<Liability>, branchExpenseRepository: Repository<BranchExpense>, branchDailyRevenueRepository: Repository<BranchDailyRevenue>, dataSource: DataSource, activityService: ActivityService, cacheService: MemoryCacheService);
+    onApplicationBootstrap(): void;
+    handleDailyRoyaltyCheck(): Promise<void>;
+    checkLateDebtsAndNotify(branch: Branch): Promise<void>;
+    verifyAndApplyMonthlyRoyalty(branchId: number): Promise<void>;
+    recordPayment(paymentDto: RecordPaymentDto, username?: string): Promise<BrandRoyaltyLedger | InventoryDebtLedger>;
+    recordRoyaltyCharge(chargeDto: RecordChargeDto, username?: string): Promise<BrandRoyaltyLedger>;
+    getRoyaltyLedger(branchId: number, page?: number, limit?: number): Promise<{
+        history: BrandRoyaltyLedger[];
+        currentBalance: number;
+        total: number;
+        page: number;
+        limit: number;
+    }>;
+    getInventoryDebtLedger(branchId: number, page?: number, limit?: number): Promise<{
+        history: InventoryDebtLedger[];
+        currentBalance: number;
+        total: number;
+        page: number;
+        limit: number;
+    }>;
+    getBranchFinancialSummary(branchId: number): Promise<{
+        branchId: number;
+        brandRoyaltyDebt: number;
+        inventoryDebt: number;
+        totalOutstandingDebt: number;
+        totalBranchExpenses: number;
+        totalBranchRevenues: number;
+    }>;
+    getAllBranchFinancialSummaries(): Promise<{
+        branchName: string;
+        branchId: number;
+        brandRoyaltyDebt: number;
+        inventoryDebt: number;
+        totalOutstandingDebt: number;
+        totalBranchExpenses: number;
+        totalBranchRevenues: number;
+    }[]>;
+    getAllPayments(): Promise<any[]>;
+    getLiabilities(): Promise<Liability[]>;
+    addLiability(data: any, username?: string): Promise<Liability>;
+    updateLiability(id: number, data: any): Promise<Liability | null>;
+    deleteLiability(id: number): Promise<import("typeorm").DeleteResult>;
+    addBranchExpense(branchId: number, data: any): Promise<BranchExpense[]>;
+    getBranchExpenses(branchId?: number): Promise<BranchExpense[]>;
+    addBranchDailyRevenue(branchId: number, data: any): Promise<BranchDailyRevenue[]>;
+    getBranchDailyRevenues(branchId?: number): Promise<BranchDailyRevenue[]>;
+}
