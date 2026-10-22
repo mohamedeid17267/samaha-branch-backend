@@ -3,3 +3,6 @@ test/
 *.log
 .env
 .env.*
+nest-cli.json
+tsconfig.json
+tsconfig.build.json
