@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "echo 'Using precompiled dist'",
+  "installCommand": "npm install --production",
   "functions": {
     "api/index.js": {
       "includeFiles": "dist/**",
