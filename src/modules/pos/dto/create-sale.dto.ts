@@ -14,6 +14,14 @@ export class SaleItemDto {
   @IsInt()
   productId: number;
 
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  sku?: string;
+
   @IsNotEmpty()
   @IsInt()
   quantity: number;
@@ -61,5 +69,25 @@ export class CreateSaleDto {
   @IsOptional()
   @IsNumber()
   remainingAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+
+  @IsOptional()
+  @IsString()
+  uuid?: string;
+
+  @IsOptional()
+  @IsString()
+  invoiceNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  deviceId?: string;
+
+  @IsOptional()
+  @IsString()
+  createdAt?: string;
 }
 

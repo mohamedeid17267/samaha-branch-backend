@@ -48,6 +48,20 @@ export class PosService {
       remainingAmount,
     } = createSaleDto;
 
+    const effectiveIdempotencyKey = createSaleDto.idempotencyKey || createSaleDto.uuid;
+    if (effectiveIdempotencyKey) {
+      const existingSale = await this.saleRepository.findOne({
+        where: { idempotencyKey: effectiveIdempotencyKey },
+        relations: { items: { product: true }, branch: true, customer: true },
+      });
+      if (existingSale) {
+        this.logger.log(
+          `[Idempotency Hit] Sale already processed for key: ${effectiveIdempotencyKey} (Sale ID: ${existingSale.id})`,
+        );
+        return existingSale;
+      }
+    }
+
     if (!items || items.length === 0) {
       throw new BadRequestException('Sale must contain at least one item');
     }
@@ -78,9 +92,15 @@ export class PosService {
         }
 
         if (inventory.currentQuantity < itemDto.quantity) {
-          throw new BadRequestException(
-            `Insufficient stock for Product ID ${itemDto.productId}`,
-          );
+          if (effectiveIdempotencyKey) {
+            this.logger.warn(
+              `[Offline Reconciliation] Stock negative for Product ${itemDto.productId} (Available: ${inventory.currentQuantity}, Sold: ${itemDto.quantity})`,
+            );
+          } else {
+            throw new BadRequestException(
+              `Insufficient stock for Product ID ${itemDto.productId}`,
+            );
+          }
         }
 
         // Deduct stock
@@ -167,6 +187,15 @@ export class PosService {
         }
       }
 
+      // Determine effective sale creation timestamp (especially for offline-first synced sales)
+      const explicitCreatedAt = createSaleDto.createdAt
+        ? new Date(createSaleDto.createdAt)
+        : null;
+      const validCreatedAt =
+        explicitCreatedAt && !isNaN(explicitCreatedAt.getTime())
+          ? explicitCreatedAt
+          : null;
+
       const sale = manager.create(BranchSale, {
         branchId,
         totalAmount,
@@ -179,9 +208,25 @@ export class PosService {
         paidAmount: salePaid,
         remainingAmount: saleRemaining,
         items: saleItems,
+        idempotencyKey: effectiveIdempotencyKey || undefined,
+        offlineReferenceId: createSaleDto.uuid || undefined,
+        invoiceNumber: createSaleDto.invoiceNumber || undefined,
+        deviceId: createSaleDto.deviceId || undefined,
+        syncedAt: effectiveIdempotencyKey ? new Date() : undefined,
+        createdAt: validCreatedAt || undefined,
       });
 
       const savedSale = await manager.save(sale);
+
+      // Force update createdAt if this was an offline sale synced at a later time
+      if (validCreatedAt) {
+        await manager.update(
+          BranchSale,
+          { id: savedSale.id },
+          { createdAt: validCreatedAt },
+        );
+        savedSale.createdAt = validCreatedAt;
+      }
 
       // If customer exists, record debt ledger and update customer balance
       if (customer) {
@@ -189,22 +234,36 @@ export class PosService {
         const afterInvoiceDebt = prevDebt + netAmount;
         const finalDebt = afterInvoiceDebt - salePaid;
 
+        const effectiveInvoiceDate = validCreatedAt
+          ? validCreatedAt.toISOString().split('T')[0]
+          : (createSaleDto.createdAt
+            ? new Date(createSaleDto.createdAt).toISOString().split('T')[0]
+            : new Date().toISOString().split('T')[0]);
+
         // 1. Charge Entry in Customer Ledger
         const chargeEntry = manager.create(CustomerDebtLedger, {
           customerId: customer.id,
           branchId,
           transactionType: TransactionType.CHARGE,
-          invoiceNumber: String(savedSale.id),
+          invoiceNumber: createSaleDto.invoiceNumber || String(savedSale.id),
           relatedSaleId: savedSale.id,
           amount: netAmount,
           paidAmount: salePaid,
           balanceAfter: afterInvoiceDebt,
-          description: `فاتورة مبيعات POS #${savedSale.id}`,
-          invoiceDate: new Date().toISOString().split('T')[0],
+          description: `فاتورة مبيعات POS #${createSaleDto.invoiceNumber || savedSale.id}`,
+          invoiceDate: effectiveInvoiceDate,
           paymentMethod,
           recordedBy: username,
+          createdAt: validCreatedAt || undefined,
         });
-        await manager.save(chargeEntry);
+        const savedCharge = await manager.save(chargeEntry);
+        if (validCreatedAt) {
+          await manager.update(
+            CustomerDebtLedger,
+            { id: savedCharge.id },
+            { createdAt: validCreatedAt },
+          );
+        }
 
         // 2. Immediate Payment Entry (if customer paid cash/card part or full)
         if (salePaid > 0) {
@@ -212,17 +271,25 @@ export class PosService {
             customerId: customer.id,
             branchId,
             transactionType: TransactionType.PAYMENT,
-            invoiceNumber: String(savedSale.id),
+            invoiceNumber: createSaleDto.invoiceNumber || String(savedSale.id),
             relatedSaleId: savedSale.id,
             amount: salePaid,
             paidAmount: salePaid,
             balanceAfter: finalDebt,
-            description: `سداد مع فاتورة POS #${savedSale.id}`,
-            invoiceDate: new Date().toISOString().split('T')[0],
+            description: `سداد مع فاتورة POS #${createSaleDto.invoiceNumber || savedSale.id}`,
+            invoiceDate: effectiveInvoiceDate,
             paymentMethod: paymentMethod === 'CREDIT' ? 'نقدي' : paymentMethod,
             recordedBy: username,
+            createdAt: validCreatedAt || undefined,
           });
-          await manager.save(paymentEntry);
+          const savedPayment = await manager.save(paymentEntry);
+          if (validCreatedAt) {
+            await manager.update(
+              CustomerDebtLedger,
+              { id: savedPayment.id },
+              { createdAt: validCreatedAt },
+            );
+          }
         }
 
         // 3. Update Customer Cumulative Totals
@@ -245,15 +312,25 @@ export class PosService {
           referenceId: String(savedSale.id),
           notes: `فاتورة بيع كاشير POS رقم #${savedSale.id}`,
           performedBy: username,
+          createdAt: validCreatedAt || undefined,
         });
-        await manager.save(movement);
+        const savedMovement = await manager.save(movement);
+        if (validCreatedAt) {
+          await manager.update(
+            StockMovement,
+            { id: savedMovement.id },
+            { createdAt: validCreatedAt },
+          );
+        }
       }
 
       // Audit Log
       await this.activityService.createAuditLog(
         username,
         'عملية بيع POS',
-        `تسجيل مبيعات جديدة للفرع بقيمة ${netAmount} ج.م (رقم الفاتورة #${savedSale.id}) ${
+        `تسجيل مبيعات للفرع بقيمة ${netAmount} ج.م (رقم الفاتورة #${savedSale.id})${
+          validCreatedAt ? ` [تاريخ العملية الفعلي: ${validCreatedAt.toLocaleString('ar-EG')}]` : ''
+        } ${
           customer ? `لصالح العميل: ${customer.name}` : ''
         }`,
       );
@@ -567,4 +644,52 @@ export class PosService {
       debtPayments: externalDebtPayments,
     };
   }
+
+  async syncBatch(
+    batchData: {
+      branchId?: number;
+      branchCode?: string;
+      deviceId?: string;
+      operations: Array<{
+        operationId: string;
+        idempotencyKey: string;
+        entityType: string;
+        operationType: string;
+        entityId: string;
+        payload: any;
+        createdAt?: string;
+      }>;
+    },
+    username = 'OfflineSync',
+  ) {
+    const results: Array<{ operationId: string; status: string; remoteId?: number; error?: string }> = [];
+
+    for (const op of batchData.operations) {
+      try {
+        if (op.entityType === 'SALE') {
+          const saleDto: CreateSaleDto = {
+            ...op.payload,
+            idempotencyKey: op.idempotencyKey || op.operationId,
+            uuid: op.entityId,
+            deviceId: batchData.deviceId,
+            createdAt: op.createdAt || op.payload?.createdAt,
+          };
+          const sale = await this.createSale(saleDto, username);
+          results.push({ operationId: op.operationId, status: 'ACCEPTED', remoteId: sale.id });
+        } else {
+          results.push({ operationId: op.operationId, status: 'IGNORED' });
+        }
+      } catch (err: any) {
+        this.logger.error(`[syncBatch] Error processing op ${op.operationId}: ${err.message}`);
+        results.push({ operationId: op.operationId, status: 'REJECTED', error: err.message });
+      }
+    }
+
+    return {
+      success: true,
+      processedCount: results.filter((r) => r.status === 'ACCEPTED').length,
+      acknowledgments: results,
+    };
+  }
 }
+

@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, Query, Headers, UseGuards } from '@nestjs/common';
 import { PosService } from './pos.service';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -17,8 +17,20 @@ export class PosController {
   async createSale(
     @Body() createSaleDto: CreateSaleDto,
     @GetUser() user: User,
+    @Headers('x-idempotency-key') idempotencyKeyHeader?: string,
   ) {
+    if (idempotencyKeyHeader && !createSaleDto.idempotencyKey) {
+      createSaleDto.idempotencyKey = idempotencyKeyHeader;
+    }
     return this.posService.createSale(createSaleDto, user.username);
+  }
+
+  @Post('sync-batch')
+  async syncBatch(
+    @Body() batchData: any,
+    @GetUser() user: User,
+  ) {
+    return this.posService.syncBatch(batchData, user?.username || 'SyncAgent');
   }
 
   @Get('sales')

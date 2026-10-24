@@ -61,6 +61,21 @@ export class BranchSale {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   remainingAmount: number;
 
+  @Column({ type: 'varchar', length: 64, nullable: true, unique: true })
+  idempotencyKey?: string;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  offlineReferenceId?: string;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  invoiceNumber?: string;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  deviceId?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  syncedAt?: Date;
+
   @OneToMany(() => BranchSaleItem, (item) => item.sale, { cascade: true })
   items: BranchSaleItem[];
 
