@@ -676,6 +676,9 @@ export class PosService {
           };
           const sale = await this.createSale(saleDto, username);
           results.push({ operationId: op.operationId, status: 'ACCEPTED', remoteId: sale.id });
+        } else if (op.entityType === 'SALE_RETURN') {
+          await this.processSaleReturn(op.payload, username);
+          results.push({ operationId: op.operationId, status: 'ACCEPTED' });
         } else {
           results.push({ operationId: op.operationId, status: 'IGNORED' });
         }
@@ -690,6 +693,120 @@ export class PosService {
       processedCount: results.filter((r) => r.status === 'ACCEPTED').length,
       acknowledgments: results,
     };
+  }
+
+  async processSaleReturn(
+    returnDto: any,
+    username = 'System',
+  ) {
+    const {
+      originalSaleId,
+      originalInvoiceNumber,
+      branchId = 1,
+      items,
+      refundAmount = 0,
+      refundMethod = 'CASH',
+      reason = 'مرتجع مبيعات',
+      performedBy,
+    } = returnDto;
+
+    const opUser = performedBy || username;
+
+    return this.dataSource.transaction(async (manager) => {
+      let originalSale: BranchSale | null = null;
+      if (originalSaleId) {
+        originalSale = await manager.findOne(BranchSale, {
+          where: { id: Number(originalSaleId) },
+          relations: { items: true, customer: true },
+        });
+      } else if (originalInvoiceNumber) {
+        originalSale = await manager.findOne(BranchSale, {
+          where: { invoiceNumber: originalInvoiceNumber },
+          relations: { items: true, customer: true },
+        });
+      }
+
+      // Restore stock for returned items
+      const pendingMovements: any[] = [];
+      if (Array.isArray(items)) {
+        for (const it of items) {
+          const pId = Number(it.productId);
+          const qty = Number(it.quantity) || 0;
+          if (qty <= 0) continue;
+
+          const inv = await manager.findOne(BranchInventory, {
+            where: { branchId, productId: pId },
+            lock: { mode: 'pessimistic_write' },
+          });
+
+          if (inv) {
+            const prevQty = Number(inv.currentQuantity || 0);
+            inv.currentQuantity = prevQty + qty;
+            await manager.save(inv);
+
+            const movement = manager.create(StockMovement, {
+              productId: pId,
+              branchId,
+              type: StockMovementType.RETURN,
+              quantity: qty,
+              balanceBefore: prevQty,
+              balanceAfter: inv.currentQuantity,
+              referenceType: 'POS_RETURN',
+              referenceId: String(originalSale?.id || originalInvoiceNumber || 'RETURN'),
+              notes: `مرتجع مبيعات: ${reason}`,
+              performedBy: opUser,
+            });
+            pendingMovements.push(movement);
+          }
+        }
+      }
+
+      if (pendingMovements.length > 0) {
+        await manager.save(pendingMovements);
+      }
+
+      // If customer exists and refund was credited
+      const customer = originalSale?.customer || (originalSale?.customerId ? await manager.findOne(Customer, { where: { id: originalSale.customerId } }) : null);
+      if (customer && Number(refundAmount) > 0) {
+        const refVal = Number(refundAmount);
+        const prevDebt = Number(customer.currentDebt || 0);
+        const newDebt = Math.max(0, prevDebt - refVal);
+        customer.currentDebt = newDebt;
+        customer.totalInvoiced = Math.max(0, Number(customer.totalInvoiced || 0) - refVal);
+        await manager.save(customer);
+
+        const ledgerEntry = manager.create(CustomerDebtLedger, {
+          customerId: customer.id,
+          branchId,
+          transactionType: TransactionType.PAYMENT,
+          invoiceNumber: `RET-${originalSale?.invoiceNumber || originalSale?.id || Date.now()}`,
+          relatedSaleId: originalSale?.id,
+          amount: refVal,
+          paidAmount: refVal,
+          balanceAfter: newDebt,
+          description: `مرتجع مبيعات فاتورة #${originalSale?.invoiceNumber || originalSale?.id || ''} (${reason})`,
+          invoiceDate: new Date().toISOString().split('T')[0],
+          paymentMethod: refundMethod === 'CREDIT' || refundMethod === 'حساب العميل' ? 'خصم مديونية' : refundMethod,
+          recordedBy: opUser,
+        });
+        await manager.save(ledgerEntry);
+      }
+
+      // Update original sale status
+      if (originalSale) {
+        originalSale.status = 'RETURNED';
+        await manager.save(originalSale);
+      }
+
+      this.cacheService.invalidatePattern(`inventory:${branchId}`);
+
+      return {
+        success: true,
+        message: 'تم إرجاع الأصناف بنجاح واستعادة رصيد المخزون',
+        refundAmount,
+        originalSaleId: originalSale?.id,
+      };
+    });
   }
 }
 

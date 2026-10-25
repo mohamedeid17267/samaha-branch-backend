@@ -89,5 +89,61 @@ export class CreateSaleDto {
   @IsOptional()
   @IsString()
   createdAt?: string;
+
+  @IsOptional()
+  splitPayments?: any;
+}
+
+export class ReturnSaleItemDto {
+  @IsNotEmpty()
+  @IsInt()
+  productId: number;
+
+  @IsNotEmpty()
+  @IsInt()
+  quantity: number;
+
+  @IsOptional()
+  @IsNumber()
+  unitPrice?: number;
+}
+
+export class ReturnSaleDto {
+  @IsOptional()
+  originalSaleId?: number;
+
+  @IsOptional()
+  @IsString()
+  originalInvoiceNumber?: string;
+
+  @IsNotEmpty()
+  @IsInt()
+  branchId: number;
+
+  @IsNotEmpty()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReturnSaleItemDto)
+  items: ReturnSaleItemDto[];
+
+  @IsNotEmpty()
+  @IsNumber()
+  refundAmount: number;
+
+  @IsOptional()
+  @IsString()
+  refundMethod?: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @IsOptional()
+  @IsString()
+  performedBy?: string;
+
+  @IsOptional()
+  @IsString()
+  createdAt?: string;
 }
 

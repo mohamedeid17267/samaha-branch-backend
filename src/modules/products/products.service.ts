@@ -348,8 +348,8 @@ export class ProductsService {
           );
         }
 
-        qb.orderBy('bi.currentQuantity', 'ASC');
-        qb.addOrderBy('product.name', 'ASC');
+        qb.orderBy('product.id', 'DESC');
+        qb.addOrderBy('bi.updatedAt', 'DESC');
 
         const [data, total] = await qb
           .skip((page - 1) * limit)

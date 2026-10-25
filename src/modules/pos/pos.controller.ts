@@ -25,6 +25,15 @@ export class PosController {
     return this.posService.createSale(createSaleDto, user.username);
   }
 
+  @Post('sales/return')
+  @UseGuards(BranchScopeGuard)
+  async returnSale(
+    @Body() returnDto: any,
+    @GetUser() user: User,
+  ) {
+    return this.posService.processSaleReturn(returnDto, user.username);
+  }
+
   @Post('sync-batch')
   async syncBatch(
     @Body() batchData: any,
