@@ -25,19 +25,26 @@ export class CategoriesService implements OnModuleInit {
 
   async seedDefaults(): Promise<void> {
     try {
-      const count = await this.categoryRepository.count();
-      if (count === 0) {
-        const defaults = [
-          { name: 'برسيلت', prefix: 'BR', description: 'أساور وبرسيلت' },
-          { name: 'سلاسل', prefix: 'NK', description: 'سلاسل وقلادات' },
-          { name: 'خواتم', prefix: 'RG', description: 'خواتم ودبل' },
-          { name: 'انسيالات', prefix: 'AN', description: 'انسيالات متنوعة' },
-          { name: 'حلقان', prefix: 'ER', description: 'أقراط وحلقان' },
-          { name: 'ساعات', prefix: 'WT', description: 'ساعات وإكسسوارات' },
-          { name: 'هاند شين', prefix: 'HC', description: 'هاند شين وسلاسل يد' },
-        ];
-        for (const item of defaults) {
-          const cat = this.categoryRepository.create(item);
+      const defaults = [
+        { name: 'سلاسل', prefix: 'NK', description: 'سلاسل وقلادات' },
+        { name: 'برسيلت', prefix: 'BR', description: 'أساور وبرسيلت' },
+        { name: 'خواتم', prefix: 'RG', description: 'خواتم ودبل' },
+        { name: 'انسيالات', prefix: 'AN', description: 'انسيالات متنوعة' },
+        { name: 'حلقان', prefix: 'ER', description: 'أقراط وحلقان' },
+        { name: 'ساعات', prefix: 'WT', description: 'ساعات وإكسسوارات' },
+        { name: 'هاند شين', prefix: 'HC', description: 'هاند شين وسلاسل يد' },
+      ];
+      for (const item of defaults) {
+        const existing = await this.categoryRepository.findOne({
+          where: { name: item.name },
+        });
+        if (!existing) {
+          let p = item.prefix;
+          const prefixTaken = await this.categoryRepository.findOne({ where: { prefix: p } });
+          if (prefixTaken) {
+            p = `${item.prefix}2`;
+          }
+          const cat = this.categoryRepository.create({ ...item, prefix: p });
           await this.categoryRepository.save(cat);
         }
       }
@@ -246,22 +253,53 @@ export class CategoriesService implements OnModuleInit {
    * Item number resets to 100, and series number increments to 2: BR-100-2
    */
   async getNextSku(
-    prefixOrCategory: string,
+    prefixOrCategory?: string,
+    categoryName?: string,
   ): Promise<{ nextSku: string; prefix: string; itemNum: number; series: number }> {
-    let prefix = (prefixOrCategory || '').trim().toUpperCase();
+    const rawPrefix = (prefixOrCategory || '').trim().toUpperCase();
+    const rawCategory = (categoryName || '').trim();
 
-    // Check if it's a category name in our database
-    const foundCat = await this.categoryRepository.findOne({
-      where: [{ name: prefixOrCategory }, { prefix }],
-    });
-    if (foundCat) {
-      prefix = foundCat.prefix;
-    } else {
-      prefix = prefix.replace(/[^A-Z0-9]/g, '');
+    let prefix = '';
+
+    // 1. Direct clean English prefix (e.g. "NK", "BR", "RG")
+    const cleanRaw = rawPrefix.replace(/[^A-Z0-9]/g, '');
+    if (cleanRaw.length >= 2 && cleanRaw.length <= 5 && !/[\u0600-\u06FF]/.test(rawPrefix)) {
+      prefix = cleanRaw;
     }
 
+    // 2. Check in database by category name or prefix
     if (!prefix) {
-      prefix = 'PR'; // Default fallback
+      const candidates = [rawCategory, rawPrefix].filter(Boolean);
+      for (const term of candidates) {
+        const foundCat = await this.categoryRepository.findOne({
+          where: [{ name: term }, { prefix: term.toUpperCase() }],
+        });
+        if (foundCat && foundCat.prefix) {
+          const clean = foundCat.prefix.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (clean) {
+            prefix = clean;
+            break;
+          }
+        }
+      }
+    }
+
+    // 3. Arabic dictionary fallback (derivePrefixFromName)
+    if (!prefix) {
+      for (const term of [rawCategory, rawPrefix]) {
+        if (term) {
+          const derived = this.derivePrefixFromName(term);
+          if (derived && derived !== 'CAT') {
+            prefix = derived;
+            break;
+          }
+        }
+      }
+    }
+
+    // 4. Default fallback: 'NK' (Never fallback to 'PR')
+    if (!prefix) {
+      prefix = 'NK';
     }
 
     // Query products whose SKU starts with this prefix

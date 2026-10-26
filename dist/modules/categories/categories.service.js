@@ -30,19 +30,26 @@ let CategoriesService = class CategoriesService {
     }
     async seedDefaults() {
         try {
-            const count = await this.categoryRepository.count();
-            if (count === 0) {
-                const defaults = [
-                    { name: 'برسيلت', prefix: 'BR', description: 'أساور وبرسيلت' },
-                    { name: 'سلاسل', prefix: 'NK', description: 'سلاسل وقلادات' },
-                    { name: 'خواتم', prefix: 'RG', description: 'خواتم ودبل' },
-                    { name: 'انسيالات', prefix: 'AN', description: 'انسيالات متنوعة' },
-                    { name: 'حلقان', prefix: 'ER', description: 'أقراط وحلقان' },
-                    { name: 'ساعات', prefix: 'WT', description: 'ساعات وإكسسوارات' },
-                    { name: 'هاند شين', prefix: 'HC', description: 'هاند شين وسلاسل يد' },
-                ];
-                for (const item of defaults) {
-                    const cat = this.categoryRepository.create(item);
+            const defaults = [
+                { name: 'سلاسل', prefix: 'NK', description: 'سلاسل وقلادات' },
+                { name: 'برسيلت', prefix: 'BR', description: 'أساور وبرسيلت' },
+                { name: 'خواتم', prefix: 'RG', description: 'خواتم ودبل' },
+                { name: 'انسيالات', prefix: 'AN', description: 'انسيالات متنوعة' },
+                { name: 'حلقان', prefix: 'ER', description: 'أقراط وحلقان' },
+                { name: 'ساعات', prefix: 'WT', description: 'ساعات وإكسسوارات' },
+                { name: 'هاند شين', prefix: 'HC', description: 'هاند شين وسلاسل يد' },
+            ];
+            for (const item of defaults) {
+                const existing = await this.categoryRepository.findOne({
+                    where: { name: item.name },
+                });
+                if (!existing) {
+                    let p = item.prefix;
+                    const prefixTaken = await this.categoryRepository.findOne({ where: { prefix: p } });
+                    if (prefixTaken) {
+                        p = `${item.prefix}2`;
+                    }
+                    const cat = this.categoryRepository.create({ ...item, prefix: p });
                     await this.categoryRepository.save(cat);
                 }
             }
@@ -213,19 +220,42 @@ let CategoriesService = class CategoriesService {
         await this.categoryRepository.remove(category);
         return { success: true, message: `تم حذف التصنيف "${category.name}" بنجاح` };
     }
-    async getNextSku(prefixOrCategory) {
-        let prefix = (prefixOrCategory || '').trim().toUpperCase();
-        const foundCat = await this.categoryRepository.findOne({
-            where: [{ name: prefixOrCategory }, { prefix }],
-        });
-        if (foundCat) {
-            prefix = foundCat.prefix;
-        }
-        else {
-            prefix = prefix.replace(/[^A-Z0-9]/g, '');
+    async getNextSku(prefixOrCategory, categoryName) {
+        const rawPrefix = (prefixOrCategory || '').trim().toUpperCase();
+        const rawCategory = (categoryName || '').trim();
+        let prefix = '';
+        const cleanRaw = rawPrefix.replace(/[^A-Z0-9]/g, '');
+        if (cleanRaw.length >= 2 && cleanRaw.length <= 5 && !/[\u0600-\u06FF]/.test(rawPrefix)) {
+            prefix = cleanRaw;
         }
         if (!prefix) {
-            prefix = 'PR';
+            const candidates = [rawCategory, rawPrefix].filter(Boolean);
+            for (const term of candidates) {
+                const foundCat = await this.categoryRepository.findOne({
+                    where: [{ name: term }, { prefix: term.toUpperCase() }],
+                });
+                if (foundCat && foundCat.prefix) {
+                    const clean = foundCat.prefix.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    if (clean) {
+                        prefix = clean;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!prefix) {
+            for (const term of [rawCategory, rawPrefix]) {
+                if (term) {
+                    const derived = this.derivePrefixFromName(term);
+                    if (derived && derived !== 'CAT') {
+                        prefix = derived;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!prefix) {
+            prefix = 'NK';
         }
         const products = await this.productRepository
             .createQueryBuilder('p')

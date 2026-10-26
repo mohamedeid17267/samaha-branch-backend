@@ -19,7 +19,7 @@ export declare class CategoriesService implements OnModuleInit {
         success: boolean;
         message: string;
     }>;
-    getNextSku(prefixOrCategory: string): Promise<{
+    getNextSku(prefixOrCategory?: string, categoryName?: string): Promise<{
         nextSku: string;
         prefix: string;
         itemNum: number;

@@ -26,8 +26,7 @@ let CategoriesController = class CategoriesController {
         return this.categoriesService.findAll();
     }
     async getNextSku(prefix, category) {
-        const target = prefix || category || 'BR';
-        return this.categoriesService.getNextSku(target);
+        return this.categoriesService.getNextSku(prefix, category);
     }
     async findOne(id) {
         return this.categoriesService.findOne(id);

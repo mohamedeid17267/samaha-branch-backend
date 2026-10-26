@@ -29,8 +29,7 @@ export class CategoriesController {
     @Query('prefix') prefix?: string,
     @Query('category') category?: string,
   ) {
-    const target = prefix || category || 'BR';
-    return this.categoriesService.getNextSku(target);
+    return this.categoriesService.getNextSku(prefix, category);
   }
 
   @Get(':id')
