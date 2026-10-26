@@ -218,10 +218,17 @@ let ProductsService = class ProductsService {
         }
         Object.assign(product, updateDto);
         const updatedProduct = await this.productRepository.save(product);
-        const changesText = changes.length > 0
-            ? ` التغييرات: ${changes.join('، ')}.`
-            : ' بدون تغييرات فعلية.';
-        await this.activityService.createAuditLog(username, 'تعديل منتج', `تم تعديل بيانات منتج: ${updatedProduct.name}.${changesText}`);
+        this.cacheService.invalidatePattern('inventory:*');
+        const skuToSync = updatedProduct.sku || updatedProduct.supplierCode;
+        if (skuToSync) {
+            const syncService = this.websiteSyncService || new website_sync_service_1.WebsiteSyncService();
+            const finalWebPrice = Number(updatedProduct.websitePrice || updatedProduct.retailPrice || 0);
+            const finalWholesale = Number(updatedProduct.wholesalePrice || 0);
+            syncService.syncStock(skuToSync, updatedProduct.globalStock, {
+                price: finalWebPrice > 0 ? finalWebPrice : undefined,
+                wholesalePrice: finalWholesale > 0 ? finalWholesale : undefined,
+            }).catch(() => { });
+        }
         return updatedProduct;
     }
     async remove(id) {
@@ -383,6 +390,112 @@ let ProductsService = class ProductsService {
         await this.activityService.createAuditLog(username, 'تحديث أسعار وبيانات الصنف', `تم تحديث أسعار الصنف [${branchInv.product?.name || productId}] (تكلفة: ${branchInv.product?.costPrice}، قطاعي: ${branchInv.retailPrice}، جملة: ${branchInv.wholesalePrice}، ويبسايت: ${branchInv.websitePrice})`);
         this.cacheService.invalidatePattern(`inventory:${branchId}`);
         return saved;
+    }
+    async updateBranchProduct(branchId, productId, updateDto, username = 'System') {
+        const product = await this.productRepository.findOne({ where: { id: productId } });
+        if (!product) {
+            throw new common_1.NotFoundException(`المنتج رقم [${productId}] غير موجود في النظام`);
+        }
+        if (updateDto.sku && updateDto.sku.trim() !== '' && updateDto.sku.trim() !== product.sku) {
+            const existingWithSku = await this.productRepository.findOne({
+                where: { sku: updateDto.sku.trim() },
+            });
+            if (existingWithSku && existingWithSku.id !== productId) {
+                throw new common_1.BadRequestException(`كود الباركود [${updateDto.sku}] مستخدم بالفعل لمنتج آخر: "${existingWithSku.name}"`);
+            }
+            product.sku = updateDto.sku.trim();
+        }
+        if (updateDto.name && updateDto.name.trim()) {
+            product.name = updateDto.name.trim();
+        }
+        if (updateDto.category !== undefined) {
+            product.category = updateDto.category.trim() || 'عام';
+        }
+        if (updateDto.supplierCode !== undefined) {
+            product.supplierCode = updateDto.supplierCode ? updateDto.supplierCode.trim() : null;
+        }
+        const rPrice = updateDto.retailPrice !== undefined ? Number(updateDto.retailPrice) : undefined;
+        const wPrice = updateDto.wholesalePrice !== undefined ? Number(updateDto.wholesalePrice) : undefined;
+        const webPrice = updateDto.websitePrice !== undefined ? Number(updateDto.websitePrice) : undefined;
+        const cPrice = updateDto.costPrice !== undefined ? Number(updateDto.costPrice) : undefined;
+        if (rPrice !== undefined) {
+            product.retailPrice = rPrice;
+            product.standardDistributerPrice = rPrice;
+        }
+        if (wPrice !== undefined) {
+            product.wholesalePrice = wPrice;
+        }
+        if (webPrice !== undefined) {
+            product.websitePrice = webPrice;
+        }
+        if (cPrice !== undefined) {
+            product.costPrice = cPrice;
+        }
+        const savedProduct = await this.productRepository.save(product);
+        let branchInv = await this.branchInventoryRepository.findOne({
+            where: { branchId, productId },
+        });
+        if (!branchInv) {
+            branchInv = this.branchInventoryRepository.create({
+                branchId,
+                productId,
+                currentQuantity: updateDto.currentQuantity !== undefined ? Number(updateDto.currentQuantity) : 0,
+                sellingPrice: product.retailPrice || 0,
+                retailPrice: product.retailPrice || 0,
+                wholesalePrice: product.wholesalePrice || 0,
+                websitePrice: product.websitePrice || 0,
+            });
+            await this.branchInventoryRepository.save(branchInv);
+        }
+        else {
+            if (rPrice !== undefined) {
+                branchInv.retailPrice = rPrice;
+                branchInv.sellingPrice = rPrice;
+            }
+            if (wPrice !== undefined) {
+                branchInv.wholesalePrice = wPrice;
+            }
+            if (webPrice !== undefined) {
+                branchInv.websitePrice = webPrice;
+            }
+            if (updateDto.currentQuantity !== undefined && updateDto.currentQuantity !== null) {
+                const newQty = Number(updateDto.currentQuantity);
+                const oldQty = branchInv.currentQuantity;
+                if (!isNaN(newQty) && newQty !== oldQty) {
+                    branchInv.currentQuantity = newQty;
+                    await this.recordStockMovement(this.stockMovementRepository, {
+                        productId,
+                        branchId,
+                        type: stock_movement_entity_1.StockMovementType.ADJUSTMENT,
+                        quantity: Math.abs(newQty - oldQty),
+                        balanceBefore: oldQty,
+                        balanceAfter: newQty,
+                        referenceType: 'MANUAL_ADJUSTMENT',
+                        notes: 'تسوية رصيد عند تعديل بيانات الصنف بالكامل',
+                        performedBy: username,
+                    });
+                }
+            }
+            await this.branchInventoryRepository.save(branchInv);
+        }
+        const skuToSync = savedProduct.sku || savedProduct.supplierCode;
+        if (skuToSync) {
+            const syncService = this.websiteSyncService || new website_sync_service_1.WebsiteSyncService();
+            const finalWebPrice = Number(savedProduct.websitePrice || savedProduct.retailPrice || 0);
+            const finalWholesale = Number(savedProduct.wholesalePrice || 0);
+            const finalQty = branchInv.currentQuantity;
+            syncService.syncStock(skuToSync, finalQty, {
+                price: finalWebPrice > 0 ? finalWebPrice : undefined,
+                wholesalePrice: finalWholesale > 0 ? finalWholesale : undefined,
+            }).catch(() => { });
+        }
+        this.cacheService.invalidatePattern(`inventory:${branchId}`);
+        await this.activityService.createAuditLog(username, 'تعديل منتج بالكامل', `تم تعديل بيانات صنف: [${savedProduct.name}] كود: ${savedProduct.sku} (تكلفة: ${savedProduct.costPrice}، قطاعي: ${savedProduct.retailPrice}، جملة: ${savedProduct.wholesalePrice}، ويبسايت: ${savedProduct.websitePrice}، رصيد: ${branchInv.currentQuantity})`);
+        return {
+            success: true,
+            product: savedProduct,
+            branchInventory: branchInv,
+        };
     }
     async importCsv(csvText, username = 'System') {
         const lines = csvText.split(/\r?\n/);

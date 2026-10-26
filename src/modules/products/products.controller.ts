@@ -71,13 +71,13 @@ export class ProductsController {
   }
 
   @Patch(':id')
-  @Roles(RoleEnum.HQ_ADMIN, RoleEnum.HQ_STAFF)
+  @Roles(RoleEnum.SUPER_ADMIN, RoleEnum.HQ_ADMIN, RoleEnum.HQ_STAFF, RoleEnum.BRANCH_MANAGER)
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateProductDto: any,
     @GetUser() user: User,
   ) {
-    return this.productsService.update(id, updateProductDto, user.username);
+    return this.productsService.update(id, updateProductDto, user?.username || 'Admin');
   }
 
   @Delete(':id')
@@ -170,6 +170,22 @@ export class ProductsController {
         websitePrice: websitePrice !== undefined ? Number(websitePrice) : undefined,
         costPrice: costPrice !== undefined ? Number(costPrice) : undefined,
       },
+    );
+  }
+
+  @Patch('branch/:branchId/product/:productId')
+  @UseGuards(BranchScopeGuard)
+  async updateBranchProduct(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('productId', ParseIntPipe) productId: number,
+    @GetUser() user: User,
+    @Body() updateDto: any,
+  ) {
+    return this.productsService.updateBranchProduct(
+      branchId,
+      productId,
+      updateDto,
+      user?.username || 'Branch User',
     );
   }
 

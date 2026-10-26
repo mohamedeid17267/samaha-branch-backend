@@ -54,6 +54,7 @@ export declare class ProductsService {
         websitePrice?: number;
         costPrice?: number;
     }): Promise<BranchInventory>;
+    updateBranchProduct(branchId: number, productId: number, updateDto: any, username?: string): Promise<any>;
     importCsv(csvText: string, username?: string): Promise<{
         successCount: number;
         errors: string[];

@@ -32,6 +32,7 @@ export declare class ProductsController {
     recordSale(branchId: number, productId: number, quantity: number, sellingPrice: number, user: User): Promise<import("../../database/entities/branch-inventory.entity").BranchInventory>;
     recordWaste(branchId: number, productId: number, quantity: number, reason: string, user: User): Promise<import("../../database/entities/branch-inventory.entity").BranchInventory>;
     updateSellingPrice(branchId: number, productId: number, user: User, sellingPrice?: number, retailPrice?: number, wholesalePrice?: number, websitePrice?: number, costPrice?: number): Promise<import("../../database/entities/branch-inventory.entity").BranchInventory>;
+    updateBranchProduct(branchId: number, productId: number, user: User, updateDto: any): Promise<any>;
     stockIn(branchId: number, sku: string, barcode: string, quantity: number, sessionId: string, user: User): Promise<{
         success: boolean;
         product: import("../../database/entities/product.entity").Product;

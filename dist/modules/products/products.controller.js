@@ -46,7 +46,7 @@ let ProductsController = class ProductsController {
         return this.productsService.findOne(id);
     }
     async update(id, updateProductDto, user) {
-        return this.productsService.update(id, updateProductDto, user.username);
+        return this.productsService.update(id, updateProductDto, user?.username || 'Admin');
     }
     async remove(id) {
         return this.productsService.remove(id);
@@ -70,6 +70,9 @@ let ProductsController = class ProductsController {
             websitePrice: websitePrice !== undefined ? Number(websitePrice) : undefined,
             costPrice: costPrice !== undefined ? Number(costPrice) : undefined,
         });
+    }
+    async updateBranchProduct(branchId, productId, user, updateDto) {
+        return this.productsService.updateBranchProduct(branchId, productId, updateDto, user?.username || 'Branch User');
     }
     async stockIn(branchId, sku, barcode, quantity, sessionId, user) {
         const code = sku || barcode;
@@ -131,7 +134,7 @@ __decorate([
 ], ProductsController.prototype, "findOne", null);
 __decorate([
     (0, common_1.Patch)(':id'),
-    (0, roles_decorator_1.Roles)(role_enum_1.RoleEnum.HQ_ADMIN, role_enum_1.RoleEnum.HQ_STAFF),
+    (0, roles_decorator_1.Roles)(role_enum_1.RoleEnum.SUPER_ADMIN, role_enum_1.RoleEnum.HQ_ADMIN, role_enum_1.RoleEnum.HQ_STAFF, role_enum_1.RoleEnum.BRANCH_MANAGER),
     __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
     __param(1, (0, common_1.Body)()),
     __param(2, (0, get_user_decorator_1.GetUser)()),
@@ -206,6 +209,17 @@ __decorate([
     __metadata("design:paramtypes", [Number, Number, user_entity_1.User, Number, Number, Number, Number, Number]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "updateSellingPrice", null);
+__decorate([
+    (0, common_1.Patch)('branch/:branchId/product/:productId'),
+    (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
+    __param(0, (0, common_1.Param)('branchId', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Param)('productId', common_1.ParseIntPipe)),
+    __param(2, (0, get_user_decorator_1.GetUser)()),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Number, user_entity_1.User, Object]),
+    __metadata("design:returntype", Promise)
+], ProductsController.prototype, "updateBranchProduct", null);
 __decorate([
     (0, common_1.Post)('branch/:branchId/stock-in'),
     (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
