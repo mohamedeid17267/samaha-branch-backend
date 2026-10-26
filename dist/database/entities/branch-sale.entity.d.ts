@@ -16,6 +16,11 @@ export declare class BranchSale {
     customer?: Customer;
     paidAmount: number;
     remainingAmount: number;
+    idempotencyKey?: string;
+    offlineReferenceId?: string;
+    invoiceNumber?: string;
+    deviceId?: string;
+    syncedAt?: Date;
     items: BranchSaleItem[];
     createdAt: Date;
     updatedAt: Date;

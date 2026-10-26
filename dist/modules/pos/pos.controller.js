@@ -26,8 +26,17 @@ let PosController = class PosController {
     constructor(posService) {
         this.posService = posService;
     }
-    async createSale(createSaleDto, user) {
+    async createSale(createSaleDto, user, idempotencyKeyHeader) {
+        if (idempotencyKeyHeader && !createSaleDto.idempotencyKey) {
+            createSaleDto.idempotencyKey = idempotencyKeyHeader;
+        }
         return this.posService.createSale(createSaleDto, user.username);
+    }
+    async returnSale(returnDto, user) {
+        return this.posService.processSaleReturn(returnDto, user.username);
+    }
+    async syncBatch(batchData, user) {
+        return this.posService.syncBatch(batchData, user?.username || 'SyncAgent');
     }
     async getSales(branchId, page, limit, startDate, endDate) {
         return this.posService.getSales(branchId ? Number(branchId) : undefined, page ? Number(page) : 1, limit ? Number(limit) : 200, startDate, endDate);
@@ -42,11 +51,29 @@ __decorate([
     (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
     __param(0, (0, common_1.Body)()),
     __param(1, (0, get_user_decorator_1.GetUser)()),
+    __param(2, (0, common_1.Headers)('x-idempotency-key')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [create_sale_dto_1.CreateSaleDto,
-        user_entity_1.User]),
+        user_entity_1.User, String]),
     __metadata("design:returntype", Promise)
 ], PosController.prototype, "createSale", null);
+__decorate([
+    (0, common_1.Post)('sales/return'),
+    (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, get_user_decorator_1.GetUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, user_entity_1.User]),
+    __metadata("design:returntype", Promise)
+], PosController.prototype, "returnSale", null);
+__decorate([
+    (0, common_1.Post)('sync-batch'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, get_user_decorator_1.GetUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, user_entity_1.User]),
+    __metadata("design:returntype", Promise)
+], PosController.prototype, "syncBatch", null);
 __decorate([
     (0, common_1.Get)('sales'),
     (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),

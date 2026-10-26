@@ -250,8 +250,8 @@ let ProductsService = class ProductsService {
                 const term = `%${search.trim()}%`;
                 qb.andWhere('(product.name LIKE :term OR product.barcode LIKE :term OR product.itemCode LIKE :term)', { term });
             }
-            qb.orderBy('bi.currentQuantity', 'ASC');
-            qb.addOrderBy('product.name', 'ASC');
+            qb.orderBy('product.id', 'DESC');
+            qb.addOrderBy('bi.updatedAt', 'DESC');
             const [data, total] = await qb
                 .skip((page - 1) * limit)
                 .take(limit)

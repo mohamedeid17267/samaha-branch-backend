@@ -44,6 +44,17 @@ let PosService = PosService_1 = class PosService {
     }
     async createSale(createSaleDto, username = 'System') {
         const { branchId, items, discount = 0, paymentMethod = 'CASH', saleType = 'RETAIL', customerName, customerId, paidAmount, remainingAmount, } = createSaleDto;
+        const effectiveIdempotencyKey = createSaleDto.idempotencyKey || createSaleDto.uuid;
+        if (effectiveIdempotencyKey) {
+            const existingSale = await this.saleRepository.findOne({
+                where: { idempotencyKey: effectiveIdempotencyKey },
+                relations: { items: { product: true }, branch: true, customer: true },
+            });
+            if (existingSale) {
+                this.logger.log(`[Idempotency Hit] Sale already processed for key: ${effectiveIdempotencyKey} (Sale ID: ${existingSale.id})`);
+                return existingSale;
+            }
+        }
         if (!items || items.length === 0) {
             throw new common_1.BadRequestException('Sale must contain at least one item');
         }
@@ -61,7 +72,12 @@ let PosService = PosService_1 = class PosService {
                     throw new common_1.NotFoundException(`Product ID ${itemDto.productId} not found in branch inventory`);
                 }
                 if (inventory.currentQuantity < itemDto.quantity) {
-                    throw new common_1.BadRequestException(`Insufficient stock for Product ID ${itemDto.productId}`);
+                    if (effectiveIdempotencyKey) {
+                        this.logger.warn(`[Offline Reconciliation] Stock negative for Product ${itemDto.productId} (Available: ${inventory.currentQuantity}, Sold: ${itemDto.quantity})`);
+                    }
+                    else {
+                        throw new common_1.BadRequestException(`Insufficient stock for Product ID ${itemDto.productId}`);
+                    }
                 }
                 const prevQty = Number(inventory.currentQuantity || 0);
                 inventory.currentQuantity = prevQty - itemDto.quantity;
@@ -134,6 +150,12 @@ let PosService = PosService_1 = class PosService {
                     finalCustomerName = customer.name;
                 }
             }
+            const explicitCreatedAt = createSaleDto.createdAt
+                ? new Date(createSaleDto.createdAt)
+                : null;
+            const validCreatedAt = explicitCreatedAt && !isNaN(explicitCreatedAt.getTime())
+                ? explicitCreatedAt
+                : null;
             const sale = manager.create(branch_sale_entity_1.BranchSale, {
                 branchId,
                 totalAmount,
@@ -146,43 +168,66 @@ let PosService = PosService_1 = class PosService {
                 paidAmount: salePaid,
                 remainingAmount: saleRemaining,
                 items: saleItems,
+                idempotencyKey: effectiveIdempotencyKey || undefined,
+                offlineReferenceId: createSaleDto.uuid || undefined,
+                invoiceNumber: createSaleDto.invoiceNumber || undefined,
+                deviceId: createSaleDto.deviceId || undefined,
+                syncedAt: effectiveIdempotencyKey ? new Date() : undefined,
+                createdAt: validCreatedAt || undefined,
             });
             const savedSale = await manager.save(sale);
+            if (validCreatedAt) {
+                await manager.update(branch_sale_entity_1.BranchSale, { id: savedSale.id }, { createdAt: validCreatedAt });
+                savedSale.createdAt = validCreatedAt;
+            }
             if (customer) {
                 const prevDebt = Number(customer.currentDebt) || 0;
                 const afterInvoiceDebt = prevDebt + netAmount;
                 const finalDebt = afterInvoiceDebt - salePaid;
+                const effectiveInvoiceDate = validCreatedAt
+                    ? validCreatedAt.toISOString().split('T')[0]
+                    : (createSaleDto.createdAt
+                        ? new Date(createSaleDto.createdAt).toISOString().split('T')[0]
+                        : new Date().toISOString().split('T')[0]);
                 const chargeEntry = manager.create(customer_debt_ledger_entity_1.CustomerDebtLedger, {
                     customerId: customer.id,
                     branchId,
                     transactionType: transaction_type_enum_1.TransactionType.CHARGE,
-                    invoiceNumber: String(savedSale.id),
+                    invoiceNumber: createSaleDto.invoiceNumber || String(savedSale.id),
                     relatedSaleId: savedSale.id,
                     amount: netAmount,
                     paidAmount: salePaid,
                     balanceAfter: afterInvoiceDebt,
-                    description: `فاتورة مبيعات POS #${savedSale.id}`,
-                    invoiceDate: new Date().toISOString().split('T')[0],
+                    description: `فاتورة مبيعات POS #${createSaleDto.invoiceNumber || savedSale.id}`,
+                    invoiceDate: effectiveInvoiceDate,
                     paymentMethod,
                     recordedBy: username,
+                    createdAt: validCreatedAt || undefined,
                 });
-                await manager.save(chargeEntry);
+                const savedCharge = await manager.save(chargeEntry);
+                if (validCreatedAt) {
+                    await manager.update(customer_debt_ledger_entity_1.CustomerDebtLedger, { id: savedCharge.id }, { createdAt: validCreatedAt });
+                }
                 if (salePaid > 0) {
                     const paymentEntry = manager.create(customer_debt_ledger_entity_1.CustomerDebtLedger, {
                         customerId: customer.id,
                         branchId,
                         transactionType: transaction_type_enum_1.TransactionType.PAYMENT,
-                        invoiceNumber: String(savedSale.id),
+                        invoiceNumber: createSaleDto.invoiceNumber || String(savedSale.id),
                         relatedSaleId: savedSale.id,
                         amount: salePaid,
                         paidAmount: salePaid,
                         balanceAfter: finalDebt,
-                        description: `سداد مع فاتورة POS #${savedSale.id}`,
-                        invoiceDate: new Date().toISOString().split('T')[0],
+                        description: `سداد مع فاتورة POS #${createSaleDto.invoiceNumber || savedSale.id}`,
+                        invoiceDate: effectiveInvoiceDate,
                         paymentMethod: paymentMethod === 'CREDIT' ? 'نقدي' : paymentMethod,
                         recordedBy: username,
+                        createdAt: validCreatedAt || undefined,
                     });
-                    await manager.save(paymentEntry);
+                    const savedPayment = await manager.save(paymentEntry);
+                    if (validCreatedAt) {
+                        await manager.update(customer_debt_ledger_entity_1.CustomerDebtLedger, { id: savedPayment.id }, { createdAt: validCreatedAt });
+                    }
                 }
                 customer.totalInvoiced = Number(customer.totalInvoiced || 0) + netAmount;
                 customer.totalPaid = Number(customer.totalPaid || 0) + salePaid;
@@ -201,10 +246,14 @@ let PosService = PosService_1 = class PosService {
                     referenceId: String(savedSale.id),
                     notes: `فاتورة بيع كاشير POS رقم #${savedSale.id}`,
                     performedBy: username,
+                    createdAt: validCreatedAt || undefined,
                 });
-                await manager.save(movement);
+                const savedMovement = await manager.save(movement);
+                if (validCreatedAt) {
+                    await manager.update(stock_movement_entity_1.StockMovement, { id: savedMovement.id }, { createdAt: validCreatedAt });
+                }
             }
-            await this.activityService.createAuditLog(username, 'عملية بيع POS', `تسجيل مبيعات جديدة للفرع بقيمة ${netAmount} ج.م (رقم الفاتورة #${savedSale.id}) ${customer ? `لصالح العميل: ${customer.name}` : ''}`);
+            await this.activityService.createAuditLog(username, 'عملية بيع POS', `تسجيل مبيعات للفرع بقيمة ${netAmount} ج.م (رقم الفاتورة #${savedSale.id})${validCreatedAt ? ` [تاريخ العملية الفعلي: ${validCreatedAt.toLocaleString('ar-EG')}]` : ''} ${customer ? `لصالح العميل: ${customer.name}` : ''}`);
             const fullSale = await manager.findOne(branch_sale_entity_1.BranchSale, {
                 where: { id: savedSale.id },
                 relations: { items: { product: true }, branch: true, customer: true },
@@ -457,6 +506,128 @@ let PosService = PosService_1 = class PosService {
             sales,
             debtPayments: externalDebtPayments,
         };
+    }
+    async syncBatch(batchData, username = 'OfflineSync') {
+        const results = [];
+        for (const op of batchData.operations) {
+            try {
+                if (op.entityType === 'SALE') {
+                    const saleDto = {
+                        ...op.payload,
+                        idempotencyKey: op.idempotencyKey || op.operationId,
+                        uuid: op.entityId,
+                        deviceId: batchData.deviceId,
+                        createdAt: op.createdAt || op.payload?.createdAt,
+                    };
+                    const sale = await this.createSale(saleDto, username);
+                    results.push({ operationId: op.operationId, status: 'ACCEPTED', remoteId: sale.id });
+                }
+                else if (op.entityType === 'SALE_RETURN') {
+                    await this.processSaleReturn(op.payload, username);
+                    results.push({ operationId: op.operationId, status: 'ACCEPTED' });
+                }
+                else {
+                    results.push({ operationId: op.operationId, status: 'IGNORED' });
+                }
+            }
+            catch (err) {
+                this.logger.error(`[syncBatch] Error processing op ${op.operationId}: ${err.message}`);
+                results.push({ operationId: op.operationId, status: 'REJECTED', error: err.message });
+            }
+        }
+        return {
+            success: true,
+            processedCount: results.filter((r) => r.status === 'ACCEPTED').length,
+            acknowledgments: results,
+        };
+    }
+    async processSaleReturn(returnDto, username = 'System') {
+        const { originalSaleId, originalInvoiceNumber, branchId = 1, items, refundAmount = 0, refundMethod = 'CASH', reason = 'مرتجع مبيعات', performedBy, } = returnDto;
+        const opUser = performedBy || username;
+        return this.dataSource.transaction(async (manager) => {
+            let originalSale = null;
+            if (originalSaleId) {
+                originalSale = await manager.findOne(branch_sale_entity_1.BranchSale, {
+                    where: { id: Number(originalSaleId) },
+                    relations: { items: true, customer: true },
+                });
+            }
+            else if (originalInvoiceNumber) {
+                originalSale = await manager.findOne(branch_sale_entity_1.BranchSale, {
+                    where: { invoiceNumber: originalInvoiceNumber },
+                    relations: { items: true, customer: true },
+                });
+            }
+            const pendingMovements = [];
+            if (Array.isArray(items)) {
+                for (const it of items) {
+                    const pId = Number(it.productId);
+                    const qty = Number(it.quantity) || 0;
+                    if (qty <= 0)
+                        continue;
+                    const inv = await manager.findOne(branch_inventory_entity_1.BranchInventory, {
+                        where: { branchId, productId: pId },
+                        lock: { mode: 'pessimistic_write' },
+                    });
+                    if (inv) {
+                        const prevQty = Number(inv.currentQuantity || 0);
+                        inv.currentQuantity = prevQty + qty;
+                        await manager.save(inv);
+                        const movement = manager.create(stock_movement_entity_1.StockMovement, {
+                            productId: pId,
+                            branchId,
+                            type: stock_movement_entity_1.StockMovementType.RETURN,
+                            quantity: qty,
+                            balanceBefore: prevQty,
+                            balanceAfter: inv.currentQuantity,
+                            referenceType: 'POS_RETURN',
+                            referenceId: String(originalSale?.id || originalInvoiceNumber || 'RETURN'),
+                            notes: `مرتجع مبيعات: ${reason}`,
+                            performedBy: opUser,
+                        });
+                        pendingMovements.push(movement);
+                    }
+                }
+            }
+            if (pendingMovements.length > 0) {
+                await manager.save(pendingMovements);
+            }
+            const customer = originalSale?.customer || (originalSale?.customerId ? await manager.findOne(customer_entity_1.Customer, { where: { id: originalSale.customerId } }) : null);
+            if (customer && Number(refundAmount) > 0) {
+                const refVal = Number(refundAmount);
+                const prevDebt = Number(customer.currentDebt || 0);
+                const newDebt = Math.max(0, prevDebt - refVal);
+                customer.currentDebt = newDebt;
+                customer.totalInvoiced = Math.max(0, Number(customer.totalInvoiced || 0) - refVal);
+                await manager.save(customer);
+                const ledgerEntry = manager.create(customer_debt_ledger_entity_1.CustomerDebtLedger, {
+                    customerId: customer.id,
+                    branchId,
+                    transactionType: transaction_type_enum_1.TransactionType.PAYMENT,
+                    invoiceNumber: `RET-${originalSale?.invoiceNumber || originalSale?.id || Date.now()}`,
+                    relatedSaleId: originalSale?.id,
+                    amount: refVal,
+                    paidAmount: refVal,
+                    balanceAfter: newDebt,
+                    description: `مرتجع مبيعات فاتورة #${originalSale?.invoiceNumber || originalSale?.id || ''} (${reason})`,
+                    invoiceDate: new Date().toISOString().split('T')[0],
+                    paymentMethod: refundMethod === 'CREDIT' || refundMethod === 'حساب العميل' ? 'خصم مديونية' : refundMethod,
+                    recordedBy: opUser,
+                });
+                await manager.save(ledgerEntry);
+            }
+            if (originalSale) {
+                originalSale.status = 'RETURNED';
+                await manager.save(originalSale);
+            }
+            this.cacheService.invalidatePattern(`inventory:${branchId}`);
+            return {
+                success: true,
+                message: 'تم إرجاع الأصناف بنجاح واستعادة رصيد المخزون',
+                refundAmount,
+                originalSaleId: originalSale?.id,
+            };
+        });
     }
 };
 exports.PosService = PosService;

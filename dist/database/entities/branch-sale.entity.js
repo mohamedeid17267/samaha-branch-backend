@@ -29,6 +29,11 @@ let BranchSale = class BranchSale {
     customer;
     paidAmount;
     remainingAmount;
+    idempotencyKey;
+    offlineReferenceId;
+    invoiceNumber;
+    deviceId;
+    syncedAt;
     items;
     createdAt;
     updatedAt;
@@ -95,6 +100,26 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'decimal', precision: 10, scale: 2, default: 0 }),
     __metadata("design:type", Number)
 ], BranchSale.prototype, "remainingAmount", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true, unique: true }),
+    __metadata("design:type", String)
+], BranchSale.prototype, "idempotencyKey", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true }),
+    __metadata("design:type", String)
+], BranchSale.prototype, "offlineReferenceId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true }),
+    __metadata("design:type", String)
+], BranchSale.prototype, "invoiceNumber", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 32, nullable: true }),
+    __metadata("design:type", String)
+], BranchSale.prototype, "deviceId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', nullable: true }),
+    __metadata("design:type", Date)
+], BranchSale.prototype, "syncedAt", void 0);
 __decorate([
     (0, typeorm_1.OneToMany)(() => branch_sale_item_entity_1.BranchSaleItem, (item) => item.sale, { cascade: true }),
     __metadata("design:type", Array)

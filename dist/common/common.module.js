@@ -10,14 +10,15 @@ exports.CommonModule = void 0;
 const common_1 = require("@nestjs/common");
 const cache_service_1 = require("./services/cache.service");
 const website_sync_service_1 = require("./services/website-sync.service");
+const reconciliation_service_1 = require("./services/reconciliation.service");
 let CommonModule = class CommonModule {
 };
 exports.CommonModule = CommonModule;
 exports.CommonModule = CommonModule = __decorate([
     (0, common_1.Global)(),
     (0, common_1.Module)({
-        providers: [cache_service_1.MemoryCacheService, website_sync_service_1.WebsiteSyncService],
-        exports: [cache_service_1.MemoryCacheService, website_sync_service_1.WebsiteSyncService],
+        providers: [cache_service_1.MemoryCacheService, website_sync_service_1.WebsiteSyncService, reconciliation_service_1.ReconciliationService],
+        exports: [cache_service_1.MemoryCacheService, website_sync_service_1.WebsiteSyncService, reconciliation_service_1.ReconciliationService],
     })
 ], CommonModule);
 //# sourceMappingURL=common.module.js.map

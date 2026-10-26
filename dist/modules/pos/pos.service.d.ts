@@ -51,4 +51,33 @@ export declare class PosService {
         sales: BranchSale[];
         debtPayments: CustomerDebtLedger[];
     }>;
+    syncBatch(batchData: {
+        branchId?: number;
+        branchCode?: string;
+        deviceId?: string;
+        operations: Array<{
+            operationId: string;
+            idempotencyKey: string;
+            entityType: string;
+            operationType: string;
+            entityId: string;
+            payload: any;
+            createdAt?: string;
+        }>;
+    }, username?: string): Promise<{
+        success: boolean;
+        processedCount: number;
+        acknowledgments: {
+            operationId: string;
+            status: string;
+            remoteId?: number;
+            error?: string;
+        }[];
+    }>;
+    processSaleReturn(returnDto: any, username?: string): Promise<{
+        success: boolean;
+        message: string;
+        refundAmount: any;
+        originalSaleId: number | undefined;
+    }>;
 }

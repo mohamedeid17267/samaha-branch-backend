@@ -96,9 +96,13 @@ module.exports = async (req, res) => {
   }
 
   // Instant Health Check
-  if (req.url && req.url.includes('ping')) {
+  const checkUrl = req.url || '';
+  const incomingPath = req.headers['x-matched-path'] || req.headers['x-vercel-matched-path'] || checkUrl;
+  if (checkUrl.includes('ping') || checkUrl.includes('health') || incomingPath.includes('health')) {
     return res.status(200).json({
       ok: true,
+      status: 'ok',
+      branch: process.env.BRANCH_CODE || 'samaha-branch',
       appModuleLoaded: Boolean(AppModule),
       loadError: loadError
         ? { message: loadError.message, stack: loadError.stack }

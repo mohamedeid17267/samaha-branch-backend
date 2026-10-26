@@ -4,7 +4,23 @@ import { User } from '../../database/entities/user.entity';
 export declare class PosController {
     private readonly posService;
     constructor(posService: PosService);
-    createSale(createSaleDto: CreateSaleDto, user: User): Promise<import("../../database/entities/branch-sale.entity").BranchSale>;
+    createSale(createSaleDto: CreateSaleDto, user: User, idempotencyKeyHeader?: string): Promise<import("../../database/entities/branch-sale.entity").BranchSale>;
+    returnSale(returnDto: any, user: User): Promise<{
+        success: boolean;
+        message: string;
+        refundAmount: any;
+        originalSaleId: number | undefined;
+    }>;
+    syncBatch(batchData: any, user: User): Promise<{
+        success: boolean;
+        processedCount: number;
+        acknowledgments: {
+            operationId: string;
+            status: string;
+            remoteId?: number;
+            error?: string;
+        }[];
+    }>;
     getSales(branchId?: number, page?: number, limit?: number, startDate?: string, endDate?: string): Promise<{
         data: import("../../database/entities/branch-sale.entity").BranchSale[];
         total: number;
