@@ -337,7 +337,7 @@ export class ProductsService {
       async () => {
         const qb = this.branchInventoryRepository
           .createQueryBuilder('bi')
-          .leftJoinAndSelect('bi.product', 'product')
+          .innerJoinAndSelect('bi.product', 'product')
           .where('bi.branchId = :branchId', { branchId });
 
         if (search && search.trim()) {
