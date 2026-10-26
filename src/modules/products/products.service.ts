@@ -326,7 +326,7 @@ export class ProductsService {
   async getBranchInventory(
     branchId: number,
     page = 1,
-    limit = 100,
+    limit = 5000,
     search?: string,
   ): Promise<{
     data: BranchInventory[];

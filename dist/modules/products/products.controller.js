@@ -55,7 +55,7 @@ let ProductsController = class ProductsController {
         return this.productsService.updateGlobalStock(id, updateStockDto.quantity);
     }
     async getBranchInventory(branchId, page, limit, search) {
-        return this.productsService.getBranchInventory(branchId, page ? Number(page) : 1, limit ? Number(limit) : 100, search);
+        return this.productsService.getBranchInventory(branchId, page ? Number(page) : 1, limit ? Number(limit) : 5000, search);
     }
     async recordSale(branchId, productId, quantity, sellingPrice, user) {
         return this.productsService.recordSale(branchId, productId, quantity, Number(sellingPrice), user.username);

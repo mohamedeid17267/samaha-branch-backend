@@ -246,7 +246,7 @@ let ProductsService = class ProductsService {
         product.globalStock = quantity;
         return this.productRepository.save(product);
     }
-    async getBranchInventory(branchId, page = 1, limit = 100, search) {
+    async getBranchInventory(branchId, page = 1, limit = 5000, search) {
         const cacheKey = `inventory:${branchId}:${page}:${limit}:${search || ''}`;
         return this.cacheService.getOrSet(cacheKey, async () => {
             const qb = this.branchInventoryRepository
