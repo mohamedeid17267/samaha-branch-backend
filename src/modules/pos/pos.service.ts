@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { BranchSale } from '../../database/entities/branch-sale.entity';
 import { BranchSaleItem } from '../../database/entities/branch-sale-item.entity';
 import { BranchInventory } from '../../database/entities/branch-inventory.entity';
@@ -74,17 +74,24 @@ export class PosService {
     }[] = [];
 
     const completedSale = await this.dataSource.transaction(async (manager) => {
+      // 1. Bulk fetch all needed inventories in ONE query
+      const productIds = Array.from(new Set(items.map((i) => Number(i.productId))));
+      const inventories = await manager.find(BranchInventory, {
+        where: { branchId, productId: In(productIds) },
+        relations: { product: true },
+      });
+
+      const invMap = new Map<number, BranchInventory>();
+      for (const inv of inventories) {
+        invMap.set(Number(inv.productId), inv);
+      }
+
       let totalAmount = 0;
       const saleItems: BranchSaleItem[] = [];
+      const inventoryUpdates: Array<{ id: number; newQty: number }> = [];
 
       for (const itemDto of items) {
-        // Lock inventory to prevent overselling
-        const inventory = await manager.findOne(BranchInventory, {
-          where: { branchId, productId: itemDto.productId },
-          relations: { product: true },
-          lock: { mode: 'pessimistic_write' },
-        });
-
+        const inventory = invMap.get(Number(itemDto.productId));
         if (!inventory) {
           throw new NotFoundException(
             `Product ID ${itemDto.productId} not found in branch inventory`,
@@ -103,16 +110,16 @@ export class PosService {
           }
         }
 
-        // Deduct stock
         const prevQty = Number(inventory.currentQuantity || 0);
-        inventory.currentQuantity = prevQty - itemDto.quantity;
-        await manager.save(inventory);
+        const newQty = prevQty - itemDto.quantity;
+        inventory.currentQuantity = newQty;
+        inventoryUpdates.push({ id: inventory.id, newQty });
 
         pendingMovements.push({
           productId: itemDto.productId,
           quantity: itemDto.quantity,
           balanceBefore: prevQty,
-          balanceAfter: inventory.currentQuantity,
+          balanceAfter: newQty,
         });
 
         // Determine price based on selected saleType: RETAIL, WHOLESALE, or WEBSITE
@@ -153,7 +160,19 @@ export class PosService {
           unitPrice,
           subTotal,
         });
+        (saleItem as any).product = inventory.product;
         saleItems.push(saleItem);
+      }
+
+      // 2. High-speed bulk update for all branch inventories in ONE query
+      if (inventoryUpdates.length > 0) {
+        const ids = inventoryUpdates.map((u) => u.id).join(',');
+        const cases = inventoryUpdates
+          .map((u) => `WHEN ${u.id} THEN ${u.newQty}`)
+          .join(' ');
+        await manager.query(
+          `UPDATE branch_inventories SET currentQuantity = CASE id ${cases} END WHERE id IN (${ids})`,
+        );
       }
 
       const netAmount = Math.max(0, totalAmount - Number(discount || 0));
@@ -180,7 +199,6 @@ export class PosService {
       if (customerId) {
         customer = await manager.findOne(Customer, {
           where: { id: customerId },
-          lock: { mode: 'pessimistic_write' },
         });
         if (customer && !finalCustomerName) {
           finalCustomerName = customer.name;
@@ -207,7 +225,6 @@ export class PosService {
         customerId: customer?.id || customerId || undefined,
         paidAmount: salePaid,
         remainingAmount: saleRemaining,
-        items: saleItems,
         idempotencyKey: effectiveIdempotencyKey || undefined,
         offlineReferenceId: createSaleDto.uuid || undefined,
         invoiceNumber: createSaleDto.invoiceNumber || undefined,
@@ -217,6 +234,12 @@ export class PosService {
       });
 
       const savedSale = await manager.save(sale);
+
+      // 3. High-speed bulk insert of BranchSaleItems in ONE query
+      for (const item of saleItems) {
+        item.saleId = savedSale.id;
+      }
+      await manager.save(BranchSaleItem, saleItems);
 
       // Force update createdAt if this was an offline sale synced at a later time
       if (validCreatedAt) {
@@ -299,9 +322,9 @@ export class PosService {
         await manager.save(customer);
       }
 
-      // Record Stock Movements for each sold item linked to this invoice
-      for (const pm of pendingMovements) {
-        const movement = manager.create(StockMovement, {
+      // 4. High-speed bulk insert of StockMovements in ONE query
+      const movements = pendingMovements.map((pm) =>
+        manager.create(StockMovement, {
           productId: pm.productId,
           branchId,
           type: StockMovementType.OUT_SALE,
@@ -313,67 +336,65 @@ export class PosService {
           notes: `فاتورة بيع كاشير POS رقم #${savedSale.id}`,
           performedBy: username,
           createdAt: validCreatedAt || undefined,
-        });
-        const savedMovement = await manager.save(movement);
-        if (validCreatedAt) {
-          await manager.update(
-            StockMovement,
-            { id: savedMovement.id },
-            { createdAt: validCreatedAt },
-          );
-        }
+        })
+      );
+      if (movements.length > 0) {
+        await manager.save(StockMovement, movements);
       }
 
-      // Audit Log
-      await this.activityService.createAuditLog(
-        username,
-        'عملية بيع POS',
-        `تسجيل مبيعات للفرع بقيمة ${netAmount} ج.م (رقم الفاتورة #${savedSale.id})${
-          validCreatedAt ? ` [تاريخ العملية الفعلي: ${validCreatedAt.toLocaleString('ar-EG')}]` : ''
-        } ${
-          customer ? `لصالح العميل: ${customer.name}` : ''
-        }`,
-      );
-
-      const fullSale = await manager.findOne(BranchSale, {
-        where: { id: savedSale.id },
-        relations: { items: { product: true }, branch: true, customer: true },
-      });
-
-      this.cacheService.invalidatePattern(`inventory:${branchId}`);
-      return fullSale || savedSale;
+      savedSale.items = saleItems;
+      savedSale.customer = customer || undefined;
+      return savedSale;
     });
+
+    // Invalidate inventory cache
+    this.cacheService.invalidatePattern(`inventory:${branchId}`);
+
+    // Asynchronous audit logging outside the transaction
+    this.activityService.createAuditLog(
+      username,
+      'عملية بيع POS',
+      `تسجيل مبيعات للفرع بقيمة ${completedSale.netAmount} ج.م (رقم الفاتورة #${completedSale.id})${
+        completedSale.customerName ? ` لصالح العميل: ${completedSale.customerName}` : ''
+      }`,
+    ).catch((err) => this.logger.warn(`Audit log error: ${err.message}`));
 
     // Background sync to Linea website (non-blocking)
     if (completedSale && Array.isArray(completedSale.items)) {
-      const syncService = this.websiteSyncService || new WebsiteSyncService();
-      const processedProductIds = new Set<number>();
+      const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+      const lineaUrl = process.env.LINEA_WEBSITE_URL;
+      const skipWebsiteSync = isVercel && (!lineaUrl || lineaUrl.includes('localhost') || lineaUrl.includes('127.0.0.1'));
 
-      for (const item of completedSale.items) {
-        if (!item.productId || processedProductIds.has(item.productId)) continue;
-        processedProductIds.add(item.productId);
+      if (!skipWebsiteSync) {
+        const syncService = this.websiteSyncService || new WebsiteSyncService();
+        const processedProductIds = new Set<number>();
 
-        const pm = [...pendingMovements].reverse().find((m) => m.productId === item.productId);
-        const newStock = pm ? pm.balanceAfter : 0;
-        const sku = item.product?.sku;
-        const websitePrice = Number(item.product?.websitePrice || item.product?.retailPrice || 0);
-        const wholesalePrice = Number(item.product?.wholesalePrice || 0);
+        for (const item of completedSale.items) {
+          if (!item.productId || processedProductIds.has(item.productId)) continue;
+          processedProductIds.add(item.productId);
 
-        if (sku) {
-          syncService.syncStock(sku, newStock, { price: websitePrice, wholesalePrice }).catch(() => {});
-        } else {
-          this.dataSource
-            .getRepository(Product)
-            .findOne({ where: { id: item.productId } })
-            .then((p) => {
-              if (p?.sku) {
-                syncService.syncStock(p.sku, newStock, {
-                  price: Number(p.websitePrice || p.retailPrice || 0),
-                  wholesalePrice: Number(p.wholesalePrice || 0),
-                }).catch(() => {});
-              }
-            })
-            .catch(() => {});
+          const pm = [...pendingMovements].reverse().find((m) => m.productId === item.productId);
+          const newStock = pm ? pm.balanceAfter : 0;
+          const sku = item.product?.sku;
+          const websitePrice = Number(item.product?.websitePrice || item.product?.retailPrice || 0);
+          const wholesalePrice = Number(item.product?.wholesalePrice || 0);
+
+          if (sku) {
+            syncService.syncStock(sku, newStock, { price: websitePrice, wholesalePrice }).catch(() => {});
+          } else {
+            this.dataSource
+              .getRepository(Product)
+              .findOne({ where: { id: item.productId } })
+              .then((p) => {
+                if (p?.sku) {
+                  syncService.syncStock(p.sku, newStock, {
+                    price: Number(p.websitePrice || p.retailPrice || 0),
+                    wholesalePrice: Number(p.wholesalePrice || 0),
+                  }).catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }
         }
       }
     }
@@ -728,21 +749,29 @@ export class PosService {
 
       // Restore stock for returned items
       const pendingMovements: any[] = [];
-      if (Array.isArray(items)) {
+      if (Array.isArray(items) && items.length > 0) {
+        const productIds = Array.from(new Set(items.map((it) => Number(it.productId)).filter((id) => !isNaN(id) && id > 0)));
+        const inventories = await manager.find(BranchInventory, {
+          where: { branchId, productId: In(productIds) },
+        });
+        const invMap = new Map<number, BranchInventory>();
+        for (const inv of inventories) {
+          invMap.set(Number(inv.productId), inv);
+        }
+
+        const invUpdates: Array<{ id: number; newQty: number }> = [];
+
         for (const it of items) {
           const pId = Number(it.productId);
           const qty = Number(it.quantity) || 0;
           if (qty <= 0) continue;
 
-          const inv = await manager.findOne(BranchInventory, {
-            where: { branchId, productId: pId },
-            lock: { mode: 'pessimistic_write' },
-          });
-
+          const inv = invMap.get(pId);
           if (inv) {
             const prevQty = Number(inv.currentQuantity || 0);
-            inv.currentQuantity = prevQty + qty;
-            await manager.save(inv);
+            const newQty = prevQty + qty;
+            inv.currentQuantity = newQty;
+            invUpdates.push({ id: inv.id, newQty });
 
             const movement = manager.create(StockMovement, {
               productId: pId,
@@ -750,7 +779,7 @@ export class PosService {
               type: StockMovementType.RETURN,
               quantity: qty,
               balanceBefore: prevQty,
-              balanceAfter: inv.currentQuantity,
+              balanceAfter: newQty,
               referenceType: 'POS_RETURN',
               referenceId: String(originalSale?.id || originalInvoiceNumber || 'RETURN'),
               notes: `مرتجع مبيعات: ${reason}`,
@@ -759,10 +788,20 @@ export class PosService {
             pendingMovements.push(movement);
           }
         }
+
+        if (invUpdates.length > 0) {
+          const ids = invUpdates.map((u) => u.id).join(',');
+          const cases = invUpdates
+            .map((u) => `WHEN ${u.id} THEN ${u.newQty}`)
+            .join(' ');
+          await manager.query(
+            `UPDATE branch_inventories SET currentQuantity = CASE id ${cases} END WHERE id IN (${ids})`
+          );
+        }
       }
 
       if (pendingMovements.length > 0) {
-        await manager.save(pendingMovements);
+        await manager.save(StockMovement, pendingMovements);
       }
 
       // If customer exists and refund was credited

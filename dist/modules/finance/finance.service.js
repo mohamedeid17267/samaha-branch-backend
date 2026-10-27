@@ -195,6 +195,9 @@ let FinanceService = FinanceService_1 = class FinanceService {
         this.cacheService = cacheService;
     }
     onApplicationBootstrap() {
+        const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+        if (isVercel)
+            return;
         setImmediate(async () => {
             try {
                 const branches = await this.branchRepository.find();

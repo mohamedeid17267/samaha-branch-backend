@@ -14,14 +14,19 @@ let WebsiteSyncService = WebsiteSyncService_1 = class WebsiteSyncService {
     async syncStock(sku, newStock, extra) {
         if (!sku)
             return;
-        const rawUrl = process.env.LINEA_WEBSITE_URL || 'http://127.0.0.1:3005';
-        const secret = process.env.LINEA_SYNC_SECRET || 'samaha-linea-sync-key-2026';
-        const urlsToTry = [rawUrl];
-        if (rawUrl.includes('localhost')) {
-            urlsToTry.push(rawUrl.replace('localhost', '127.0.0.1'));
+        const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+        const rawUrl = process.env.LINEA_WEBSITE_URL;
+        if (isVercel && (!rawUrl || rawUrl.includes('localhost') || rawUrl.includes('127.0.0.1'))) {
+            return;
         }
-        else if (rawUrl.includes('127.0.0.1')) {
-            urlsToTry.push(rawUrl.replace('127.0.0.1', 'localhost'));
+        const effectiveUrl = rawUrl || 'http://127.0.0.1:3005';
+        const secret = process.env.LINEA_SYNC_SECRET || 'samaha-linea-sync-key-2026';
+        const urlsToTry = [effectiveUrl];
+        if (effectiveUrl.includes('localhost')) {
+            urlsToTry.push(effectiveUrl.replace('localhost', '127.0.0.1'));
+        }
+        else if (effectiveUrl.includes('127.0.0.1')) {
+            urlsToTry.push(effectiveUrl.replace('127.0.0.1', 'localhost'));
         }
         const payload = {
             sku: sku.trim(),
@@ -41,7 +46,7 @@ let WebsiteSyncService = WebsiteSyncService_1 = class WebsiteSyncService {
                             'x-sync-secret': secret,
                         },
                         body: JSON.stringify(payload),
-                        signal: AbortSignal.timeout(10000),
+                        signal: AbortSignal.timeout(2500),
                     });
                     if (response.ok) {
                         const data = (await response.json().catch(() => null));

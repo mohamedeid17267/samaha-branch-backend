@@ -38,9 +38,18 @@ async function bootstrap() {
       if (req.body && typeof req.body === 'object') {
         return next();
       }
-      express.json()(req, res, (err) => {
+      if (typeof req.body === 'string') {
+        try {
+          req.body = JSON.parse(req.body);
+          return next();
+        } catch (_) {}
+      }
+      if (req.readableEnded || req.complete) {
+        return next();
+      }
+      express.json({ limit: '15mb' })(req, res, (err) => {
         if (err) return next(err);
-        express.urlencoded({ extended: true })(req, res, next);
+        express.urlencoded({ extended: true, limit: '15mb' })(req, res, next);
       });
     });
 

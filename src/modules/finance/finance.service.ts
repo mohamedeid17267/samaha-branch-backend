@@ -190,6 +190,9 @@ export class FinanceService implements OnApplicationBootstrap {
   ) {}
 
   onApplicationBootstrap() {
+    const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+    if (isVercel) return;
+
     // Run asynchronously without delaying server port binding
     setImmediate(async () => {
       try {

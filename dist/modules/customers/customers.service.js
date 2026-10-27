@@ -33,6 +33,9 @@ let CustomersService = class CustomersService {
         this.activityService = activityService;
     }
     async onApplicationBootstrap() {
+        const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+        if (isVercel)
+            return;
         await this.checkAllCustomersLateDebt();
     }
     async handleDailyCustomerDebtCheck() {

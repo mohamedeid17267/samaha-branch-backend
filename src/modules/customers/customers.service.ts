@@ -28,6 +28,8 @@ export class CustomersService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap() {
+    const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+    if (isVercel) return;
     await this.checkAllCustomersLateDebt();
   }
 

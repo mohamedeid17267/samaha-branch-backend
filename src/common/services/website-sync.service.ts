@@ -15,15 +15,21 @@ export class WebsiteSyncService {
   ): Promise<void> {
     if (!sku) return;
 
-    const rawUrl = process.env.LINEA_WEBSITE_URL || 'http://127.0.0.1:3005';
+    const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+    const rawUrl = process.env.LINEA_WEBSITE_URL;
+    if (isVercel && (!rawUrl || rawUrl.includes('localhost') || rawUrl.includes('127.0.0.1'))) {
+      return;
+    }
+
+    const effectiveUrl = rawUrl || 'http://127.0.0.1:3005';
     const secret = process.env.LINEA_SYNC_SECRET || 'samaha-linea-sync-key-2026';
 
     // Build URL candidates to bypass any macOS localhost IPv6 resolution delays
-    const urlsToTry: string[] = [rawUrl];
-    if (rawUrl.includes('localhost')) {
-      urlsToTry.push(rawUrl.replace('localhost', '127.0.0.1'));
-    } else if (rawUrl.includes('127.0.0.1')) {
-      urlsToTry.push(rawUrl.replace('127.0.0.1', 'localhost'));
+    const urlsToTry: string[] = [effectiveUrl];
+    if (effectiveUrl.includes('localhost')) {
+      urlsToTry.push(effectiveUrl.replace('localhost', '127.0.0.1'));
+    } else if (effectiveUrl.includes('127.0.0.1')) {
+      urlsToTry.push(effectiveUrl.replace('127.0.0.1', 'localhost'));
     }
 
     const payload = {
@@ -46,7 +52,7 @@ export class WebsiteSyncService {
               'x-sync-secret': secret,
             },
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(10000), // Generous 10s timeout to allow MongoDB Atlas roundtrip
+            signal: AbortSignal.timeout(2500), // Quick timeout to prevent holding POS / serverless lambda
           });
 
           if (response.ok) {
