@@ -326,7 +326,7 @@ export class ProductsService {
   async getBranchInventory(
     branchId: number,
     page = 1,
-    limit = 5000,
+    limit = 0,
     search?: string,
   ): Promise<{
     data: BranchInventory[];
@@ -346,7 +346,7 @@ export class ProductsService {
         if (search && search.trim()) {
           const term = `%${search.trim()}%`;
           qb.andWhere(
-            '(product.name LIKE :term OR product.barcode LIKE :term OR product.itemCode LIKE :term)',
+            '(product.name LIKE :term OR product.sku LIKE :term OR product.supplierCode LIKE :term)',
             { term },
           );
         }
@@ -354,10 +354,11 @@ export class ProductsService {
         qb.orderBy('product.id', 'DESC');
         qb.addOrderBy('bi.updatedAt', 'DESC');
 
-        const [data, total] = await qb
-          .skip((page - 1) * limit)
-          .take(limit)
-          .getManyAndCount();
+        if (limit > 0) {
+          qb.skip((page - 1) * limit).take(limit);
+        }
+
+        const [data, total] = await qb.getManyAndCount();
 
         return {
           data,

@@ -107,7 +107,7 @@ export class ProductsController {
     return this.productsService.getBranchInventory(
       branchId,
       page ? Number(page) : 1,
-      limit ? Number(limit) : 5000,
+      limit !== undefined ? Number(limit) : 0,
       search,
     );
   }
