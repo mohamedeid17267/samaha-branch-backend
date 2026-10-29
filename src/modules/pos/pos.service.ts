@@ -416,6 +416,7 @@ export class PosService {
     limit: number;
     summary: {
       totalSales: number;
+      totalReturns?: number;
       invoicesCount: number;
       totalItemsCount: number;
       cashTotal: number;
@@ -453,6 +454,7 @@ export class PosService {
     const total = allMatching.length;
 
     let totalSales = 0;
+    let totalReturns = 0;
     let totalItemsCount = 0;
     let cashTotal = 0;
     let visaTotal = 0;
@@ -462,37 +464,53 @@ export class PosService {
 
     for (const s of allMatching) {
       const net = Number(s.netAmount) || 0;
-      totalSales += net;
+      const retAmt = Number((s as any).returnedAmount || 0) || (s.status === 'RETURNED' ? net : 0);
+      totalReturns += retAmt;
 
-      const paid = Number(
+      const effectiveNet = Math.max(0, net - retAmt);
+      totalSales += effectiveNet;
+
+      const rawPaid = Number(
         s.paidAmount !== undefined && s.paidAmount !== null
           ? s.paidAmount
           : s.paymentMethod === 'CREDIT' || s.paymentMethod === 'آجل'
           ? 0
           : net,
       );
-      const remaining = Number(
+      const rawRemaining = Number(
         s.remainingAmount !== undefined && s.remainingAmount !== null
           ? s.remainingAmount
           : s.paymentMethod === 'CREDIT' || s.paymentMethod === 'آجل'
           ? net
-          : Math.max(0, net - paid),
+          : Math.max(0, net - rawPaid),
       );
 
-      creditTotal += remaining;
+      let effectiveRemaining = rawRemaining;
+      let effectivePaid = rawPaid;
+      if (retAmt > 0) {
+        if (effectiveRemaining >= retAmt) {
+          effectiveRemaining -= retAmt;
+        } else {
+          const excess = retAmt - effectiveRemaining;
+          effectiveRemaining = 0;
+          effectivePaid = Math.max(0, effectivePaid - excess);
+        }
+      }
 
-      if (paid > 0) {
+      creditTotal += effectiveRemaining;
+
+      if (effectivePaid > 0) {
         const m = (s.paymentMethod || 'CASH').toUpperCase();
         if (m === 'CASH' || m === 'كاش') {
-          cashTotal += paid;
+          cashTotal += effectivePaid;
         } else if (m === 'CARD' || m === 'VISA') {
-          visaTotal += paid;
+          visaTotal += effectivePaid;
         } else if (m === 'INSTAPAY') {
-          instapayTotal += paid;
+          instapayTotal += effectivePaid;
         } else if (m === 'WALLET') {
-          walletTotal += paid;
+          walletTotal += effectivePaid;
         } else if (m !== 'CREDIT' && m !== 'آجل') {
-          cashTotal += paid;
+          cashTotal += effectivePaid;
         }
       }
       if (s.items && Array.isArray(s.items)) {
@@ -514,6 +532,7 @@ export class PosService {
       limit,
       summary: {
         totalSales,
+        totalReturns,
         invoicesCount: total,
         totalItemsCount,
         cashTotal,
@@ -740,6 +759,12 @@ export class PosService {
           where: { id: Number(originalSaleId) },
           relations: { items: true, customer: true },
         });
+        if (!originalSale && originalInvoiceNumber) {
+          originalSale = await manager.findOne(BranchSale, {
+            where: { invoiceNumber: originalInvoiceNumber },
+            relations: { items: true, customer: true },
+          });
+        }
       } else if (originalInvoiceNumber) {
         originalSale = await manager.findOne(BranchSale, {
           where: { invoiceNumber: originalInvoiceNumber },
@@ -831,9 +856,14 @@ export class PosService {
         await manager.save(ledgerEntry);
       }
 
-      // Update original sale status
+      // Update original sale status and returnedAmount
       if (originalSale) {
-        originalSale.status = 'RETURNED';
+        const currentReturned = Number(originalSale.returnedAmount || 0);
+        const refAmt = Number(refundAmount || 0);
+        const newReturned = currentReturned + refAmt;
+        originalSale.returnedAmount = newReturned;
+        const netAmt = Number(originalSale.netAmount || 0);
+        originalSale.status = newReturned >= netAmt ? 'RETURNED' : 'PARTIALLY_RETURNED';
         await manager.save(originalSale);
       }
 

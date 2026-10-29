@@ -33,6 +33,9 @@ export class BranchSale {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   netAmount: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  returnedAmount: number;
+
   @Column({ type: 'varchar', default: 'CASH' })
   paymentMethod: string;
 
