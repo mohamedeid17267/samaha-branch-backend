@@ -8,4 +8,9 @@ export declare class AppController {
         timestamp: string;
         branch: string;
     };
+    ping(): {
+        status: string;
+        timestamp: string;
+        branch: string;
+    };
 }

@@ -27,6 +27,13 @@ let AppController = class AppController {
             branch: process.env.BRANCH_CODE || 'samaha-branch',
         };
     }
+    ping() {
+        return {
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            branch: process.env.BRANCH_CODE || 'samaha-branch',
+        };
+    }
 };
 exports.AppController = AppController;
 __decorate([
@@ -41,6 +48,12 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], AppController.prototype, "getHealth", null);
+__decorate([
+    (0, common_1.Get)('ping'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], AppController.prototype, "ping", null);
 exports.AppController = AppController = __decorate([
     (0, common_1.Controller)(),
     __metadata("design:paramtypes", [app_service_1.AppService])

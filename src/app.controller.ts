@@ -18,5 +18,14 @@ export class AppController {
       branch: process.env.BRANCH_CODE || 'samaha-branch',
     };
   }
+
+  @Get('ping')
+  ping() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      branch: process.env.BRANCH_CODE || 'samaha-branch',
+    };
+  }
 }
 
