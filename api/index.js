@@ -33,6 +33,22 @@ async function bootstrap() {
 
     const expressApp = express();
 
+    // Enable high-ratio GZIP compression to preserve Vercel bandwidth quota
+    try {
+      const compression = require('compression');
+      expressApp.use(compression({ threshold: 1024 }));
+    } catch (_) {}
+
+    // Edge CDN Caching Headers for GET requests (dramatically reduces Vercel Function Invocations & Origin Transfer)
+    expressApp.use((req, res, next) => {
+      if (req.method === 'GET') {
+        res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
+      } else {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      }
+      next();
+    });
+
     // Body parsing middleware safe for serverless
     expressApp.use((req, res, next) => {
       if (req.body && typeof req.body === 'object') {
