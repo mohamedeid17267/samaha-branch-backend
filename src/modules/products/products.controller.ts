@@ -95,6 +95,14 @@ export class ProductsController {
     return this.productsService.updateGlobalStock(id, updateStockDto.quantity);
   }
 
+  @Get('branch/:branchId/summary')
+  @UseGuards(BranchScopeGuard)
+  async getBranchInventorySummary(
+    @Param('branchId', ParseIntPipe) branchId: number,
+  ) {
+    return this.productsService.getBranchInventorySummary(branchId);
+  }
+
   // Multi-tenant scoped endpoint: Gets branch's specific inventory level.
   @Get('branch/:branchId')
   @UseGuards(BranchScopeGuard)
@@ -103,12 +111,14 @@ export class ProductsController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('search') search?: string,
+    @Query('category') category?: string,
   ) {
     return this.productsService.getBranchInventory(
       branchId,
       page ? Number(page) : 1,
-      limit !== undefined ? Number(limit) : 0,
+      limit !== undefined ? Number(limit) : 50,
       search,
+      category,
     );
   }
 

@@ -21,6 +21,7 @@ let BranchSale = class BranchSale {
     totalAmount;
     discount;
     netAmount;
+    returnedAmount;
     paymentMethod;
     saleType;
     status;
@@ -64,6 +65,10 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'decimal', precision: 10, scale: 2, default: 0 }),
     __metadata("design:type", Number)
 ], BranchSale.prototype, "netAmount", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'decimal', precision: 10, scale: 2, default: 0 }),
+    __metadata("design:type", Number)
+], BranchSale.prototype, "returnedAmount", void 0);
 __decorate([
     (0, typeorm_1.Column)({ type: 'varchar', default: 'CASH' }),
     __metadata("design:type", String)

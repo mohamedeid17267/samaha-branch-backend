@@ -201,16 +201,20 @@ let MainOfficeService = class MainOfficeService {
             let todaySalesCount = 0;
             for (const s of sales) {
                 const net = Number(s.netAmount) || 0;
-                totalSalesAmount += net;
+                const retAmt = Number(s.returnedAmount || 0) || (s.status === 'RETURNED' ? net : 0);
+                const effectiveNet = Math.max(0, net - retAmt);
+                totalSalesAmount += effectiveNet;
                 if (s.paymentMethod === 'VISA') {
-                    visaSalesAmount += net;
+                    visaSalesAmount += effectiveNet;
                 }
                 else {
-                    cashSalesAmount += net;
+                    cashSalesAmount += effectiveNet;
                 }
                 if (s.createdAt && new Date(s.createdAt) >= startOfToday) {
-                    todaySalesAmount += net;
-                    todaySalesCount++;
+                    todaySalesAmount += effectiveNet;
+                    if (s.status !== 'RETURNED') {
+                        todaySalesCount++;
+                    }
                 }
             }
             const inventory = await this.branchInventoryRepo.find({

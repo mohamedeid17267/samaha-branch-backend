@@ -54,8 +54,11 @@ let ProductsController = class ProductsController {
     async updateGlobalStock(id, updateStockDto) {
         return this.productsService.updateGlobalStock(id, updateStockDto.quantity);
     }
-    async getBranchInventory(branchId, page, limit, search) {
-        return this.productsService.getBranchInventory(branchId, page ? Number(page) : 1, limit ? Number(limit) : 5000, search);
+    async getBranchInventorySummary(branchId) {
+        return this.productsService.getBranchInventorySummary(branchId);
+    }
+    async getBranchInventory(branchId, page, limit, search, category) {
+        return this.productsService.getBranchInventory(branchId, page ? Number(page) : 1, limit !== undefined ? Number(limit) : 50, search, category);
     }
     async recordSale(branchId, productId, quantity, sellingPrice, user) {
         return this.productsService.recordSale(branchId, productId, quantity, Number(sellingPrice), user.username);
@@ -160,14 +163,23 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "updateGlobalStock", null);
 __decorate([
+    (0, common_1.Get)('branch/:branchId/summary'),
+    (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
+    __param(0, (0, common_1.Param)('branchId', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number]),
+    __metadata("design:returntype", Promise)
+], ProductsController.prototype, "getBranchInventorySummary", null);
+__decorate([
     (0, common_1.Get)('branch/:branchId'),
     (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
     __param(0, (0, common_1.Param)('branchId', common_1.ParseIntPipe)),
     __param(1, (0, common_1.Query)('page')),
     __param(2, (0, common_1.Query)('limit')),
     __param(3, (0, common_1.Query)('search')),
+    __param(4, (0, common_1.Query)('category')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, Number, Number, String]),
+    __metadata("design:paramtypes", [Number, Number, Number, String, String]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "getBranchInventory", null);
 __decorate([

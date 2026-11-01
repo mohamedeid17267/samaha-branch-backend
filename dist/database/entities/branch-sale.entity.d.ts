@@ -8,6 +8,7 @@ export declare class BranchSale {
     totalAmount: number;
     discount: number;
     netAmount: number;
+    returnedAmount: number;
     paymentMethod: string;
     saleType: string;
     status: string;

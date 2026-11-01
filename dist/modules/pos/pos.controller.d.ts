@@ -28,6 +28,7 @@ export declare class PosController {
         limit: number;
         summary: {
             totalSales: number;
+            totalReturns?: number;
             invoicesCount: number;
             totalItemsCount: number;
             cashTotal: number;

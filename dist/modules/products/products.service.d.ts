@@ -40,11 +40,33 @@ export declare class ProductsService {
         message: string;
     }>;
     updateGlobalStock(id: number, quantity: number): Promise<Product>;
-    getBranchInventory(branchId: number, page?: number, limit?: number, search?: string): Promise<{
+    getBranchInventory(branchId: number, page?: number, limit?: number, search?: string, category?: string): Promise<{
         data: BranchInventory[];
         total: number;
         page: number;
         limit: number;
+        totalPages: number;
+        stats: {
+            totalPieces: number;
+            totalCost: number;
+            totalRetail: number;
+        };
+    }>;
+    getBranchInventorySummary(branchId: number): Promise<{
+        total: {
+            cost: number;
+            retail: number;
+            profit: number;
+            pieces: number;
+            models: number;
+        };
+        categories: Record<string, {
+            count: number;
+            pieces: number;
+            cost: number;
+            retail: number;
+            profit: number;
+        }>;
     }>;
     recordSale(branchId: number, productId: number, quantity: number, sellingPrice: number, username?: string): Promise<BranchInventory>;
     recordWaste(branchId: number, productId: number, quantity: number, reason: string, username?: string): Promise<BranchInventory>;

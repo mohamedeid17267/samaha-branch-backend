@@ -23,11 +23,33 @@ export declare class ProductsController {
         message: string;
     }>;
     updateGlobalStock(id: number, updateStockDto: UpdateStockDto): Promise<import("../../database/entities/product.entity").Product>;
-    getBranchInventory(branchId: number, page?: number, limit?: number, search?: string): Promise<{
+    getBranchInventorySummary(branchId: number): Promise<{
+        total: {
+            cost: number;
+            retail: number;
+            profit: number;
+            pieces: number;
+            models: number;
+        };
+        categories: Record<string, {
+            count: number;
+            pieces: number;
+            cost: number;
+            retail: number;
+            profit: number;
+        }>;
+    }>;
+    getBranchInventory(branchId: number, page?: number, limit?: number, search?: string, category?: string): Promise<{
         data: import("../../database/entities/branch-inventory.entity").BranchInventory[];
         total: number;
         page: number;
         limit: number;
+        totalPages: number;
+        stats: {
+            totalPieces: number;
+            totalCost: number;
+            totalRetail: number;
+        };
     }>;
     recordSale(branchId: number, productId: number, quantity: number, sellingPrice: number, user: User): Promise<import("../../database/entities/branch-inventory.entity").BranchInventory>;
     recordWaste(branchId: number, productId: number, quantity: number, reason: string, user: User): Promise<import("../../database/entities/branch-inventory.entity").BranchInventory>;

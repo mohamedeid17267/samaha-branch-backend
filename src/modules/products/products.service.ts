@@ -12,6 +12,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { ActivityService } from '../activity/activity.service';
 import { MemoryCacheService } from '../../common/services/cache.service';
 import { WebsiteSyncService } from '../../common/services/website-sync.service';
+import { convertArabicKeyboardToEnglish } from '../../common/utils/barcode.util';
 
 @Injectable()
 export class ProductsService {
@@ -326,15 +327,22 @@ export class ProductsService {
   async getBranchInventory(
     branchId: number,
     page = 1,
-    limit = 0,
+    limit = 50,
     search?: string,
+    category?: string,
   ): Promise<{
     data: BranchInventory[];
     total: number;
     page: number;
     limit: number;
+    totalPages: number;
+    stats: {
+      totalPieces: number;
+      totalCost: number;
+      totalRetail: number;
+    };
   }> {
-    const cacheKey = `inventory:${branchId}:${page}:${limit}:${search || ''}`;
+    const cacheKey = `inventory:${branchId}:${page}:${limit}:${search || ''}:${category || ''}`;
     return this.cacheService.getOrSet(
       cacheKey,
       async () => {
@@ -343,12 +351,30 @@ export class ProductsService {
           .innerJoinAndSelect('bi.product', 'product')
           .where('bi.branchId = :branchId', { branchId });
 
+        if (category && category !== 'ALL') {
+          if (category === 'أخرى (PR)' || category === 'PR') {
+            qb.andWhere('product.sku LIKE :prPrefix', { prPrefix: 'PR-%' });
+          } else {
+            qb.andWhere('product.category = :category', { category });
+          }
+        }
+
         if (search && search.trim()) {
-          const term = `%${search.trim()}%`;
-          qb.andWhere(
-            '(product.name LIKE :term OR product.sku LIKE :term OR product.supplierCode LIKE :term)',
-            { term },
-          );
+          const raw = search.trim();
+          const term = `%${raw}%`;
+          const converted = convertArabicKeyboardToEnglish(raw);
+          const convertedTerm = `%${converted}%`;
+          if (converted && converted.toLowerCase() !== raw.toLowerCase()) {
+            qb.andWhere(
+              '(product.name LIKE :term OR product.sku LIKE :term OR product.supplierCode LIKE :term OR product.sku LIKE :convertedTerm OR product.supplierCode LIKE :convertedTerm)',
+              { term, convertedTerm },
+            );
+          } else {
+            qb.andWhere(
+              '(product.name LIKE :term OR product.sku LIKE :term OR product.supplierCode LIKE :term)',
+              { term },
+            );
+          }
         }
 
         qb.orderBy('product.id', 'DESC');
@@ -360,14 +386,134 @@ export class ProductsService {
 
         const [data, total] = await qb.getManyAndCount();
 
+        // Calculate branch-wide or category-wide inventory statistics
+        const statsQb = this.branchInventoryRepository
+          .createQueryBuilder('bi')
+          .innerJoin('bi.product', 'product')
+          .where('bi.branchId = :branchId', { branchId });
+
+        if (category && category !== 'ALL') {
+          if (category === 'أخرى (PR)' || category === 'PR') {
+            statsQb.andWhere('product.sku LIKE :prPrefix', { prPrefix: 'PR-%' });
+          } else {
+            statsQb.andWhere('product.category = :category', { category });
+          }
+        }
+
+        const statsRaw = await statsQb
+          .select('COALESCE(SUM(bi.currentQuantity), 0)', 'totalPieces')
+          .addSelect(
+            'COALESCE(SUM(bi.currentQuantity * COALESCE(product.costPrice, 0)), 0)',
+            'totalCost',
+          )
+          .addSelect(
+            'COALESCE(SUM(bi.currentQuantity * COALESCE(bi.sellingPrice, bi.retailPrice, product.retailPrice, product.standardDistributerPrice, 0)), 0)',
+            'totalRetail',
+          )
+          .getRawOne();
+
+        const effectiveLimit = limit > 0 ? limit : total;
+        const summary = await this.getBranchInventorySummary(branchId);
+
         return {
           data,
           total,
           page,
-          limit,
+          limit: effectiveLimit,
+          totalPages: effectiveLimit > 0 ? Math.ceil(total / effectiveLimit) : 1,
+          stats: {
+            totalPieces: Number(statsRaw?.totalPieces || 0),
+            totalCost: Number(statsRaw?.totalCost || 0),
+            totalRetail: Number(statsRaw?.totalRetail || 0),
+          },
+          summary,
         };
       },
       30, // Cache for 30 seconds
+    );
+  }
+
+  async getBranchInventorySummary(branchId: number): Promise<{
+    total: {
+      cost: number;
+      retail: number;
+      profit: number;
+      pieces: number;
+      models: number;
+    };
+    categories: Record<
+      string,
+      {
+        count: number;
+        pieces: number;
+        cost: number;
+        retail: number;
+        profit: number;
+      }
+    >;
+  }> {
+    const cacheKey = `inventory_summary:${branchId}`;
+    return this.cacheService.getOrSet(
+      cacheKey,
+      async () => {
+        const rows = await this.branchInventoryRepository
+          .createQueryBuilder('bi')
+          .innerJoin('bi.product', 'product')
+          .where('bi.branchId = :branchId', { branchId })
+          .select('COALESCE(product.category, "عام")', 'category')
+          .addSelect('COUNT(DISTINCT product.id)', 'count')
+          .addSelect('COALESCE(SUM(bi.currentQuantity), 0)', 'pieces')
+          .addSelect(
+            'COALESCE(SUM(bi.currentQuantity * COALESCE(product.costPrice, 0)), 0)',
+            'cost',
+          )
+          .addSelect(
+            'COALESCE(SUM(bi.currentQuantity * COALESCE(bi.sellingPrice, bi.retailPrice, product.retailPrice, product.standardDistributerPrice, 0)), 0)',
+            'retail',
+          )
+          .groupBy('product.category')
+          .getRawMany();
+
+        const categories: Record<string, any> = {};
+        let totalCost = 0;
+        let totalRetail = 0;
+        let totalPieces = 0;
+        let totalModels = 0;
+
+        for (const row of rows) {
+          const rawCat = (row.category || 'عام').trim();
+          const count = Number(row.count || 0);
+          const pieces = Number(row.pieces || 0);
+          const cost = Number(Number(row.cost || 0).toFixed(2));
+          const retail = Number(Number(row.retail || 0).toFixed(2));
+          const profit = Number((retail - cost).toFixed(2));
+
+          categories[rawCat] = {
+            count,
+            pieces,
+            cost,
+            retail,
+            profit,
+          };
+
+          totalCost += cost;
+          totalRetail += retail;
+          totalPieces += pieces;
+          totalModels += count;
+        }
+
+        return {
+          total: {
+            cost: Number(totalCost.toFixed(2)),
+            retail: Number(totalRetail.toFixed(2)),
+            profit: Number((totalRetail - totalCost).toFixed(2)),
+            pieces: totalPieces,
+            models: totalModels,
+          },
+          categories,
+        };
+      },
+      60, // 60 seconds cache
     );
   }
 
@@ -856,6 +1002,26 @@ export class ProductsService {
       });
     }
 
+    // Fallback: If barcode scanner was active with Arabic keyboard layout
+    if (!product) {
+      const convertedCode = convertArabicKeyboardToEnglish(cleanCode).trim();
+      if (convertedCode && convertedCode !== cleanCode) {
+        product = await this.productRepository.findOne({
+          where: [
+            { sku: convertedCode },
+            { sku: convertedCode.toUpperCase() },
+            { supplierCode: convertedCode },
+            { supplierCode: convertedCode.toUpperCase() },
+          ],
+        });
+        if (!product && !isNaN(Number(convertedCode))) {
+          product = await this.productRepository.findOne({
+            where: { id: Number(convertedCode) },
+          });
+        }
+      }
+    }
+
     if (!product) {
       throw new NotFoundException(`المنتج ذو الكود [${cleanCode}] غير مسجل بالنظام`);
     }
@@ -956,6 +1122,27 @@ export class ProductsService {
         where: { id: Number(cleanCode) },
       });
     }
+
+    // Fallback: If barcode was scanned while keyboard layout was Arabic
+    if (!product) {
+      const convertedCode = convertArabicKeyboardToEnglish(cleanCode).trim();
+      if (convertedCode && convertedCode !== cleanCode) {
+        product = await this.productRepository.findOne({
+          where: [
+            { sku: convertedCode },
+            { sku: convertedCode.toUpperCase() },
+            { supplierCode: convertedCode },
+            { supplierCode: convertedCode.toUpperCase() },
+          ],
+        });
+        if (!product && !isNaN(Number(convertedCode))) {
+          product = await this.productRepository.findOne({
+            where: { id: Number(convertedCode) },
+          });
+        }
+      }
+    }
+
     if (!product) {
       throw new NotFoundException(`لم يتم العثور على صنف بالباركود [${cleanCode}]`);
     }

@@ -21,6 +21,7 @@ export declare class PosService {
         limit: number;
         summary: {
             totalSales: number;
+            totalReturns?: number;
             invoicesCount: number;
             totalItemsCount: number;
             cashTotal: number;

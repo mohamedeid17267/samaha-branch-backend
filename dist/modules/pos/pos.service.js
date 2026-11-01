@@ -335,6 +335,7 @@ let PosService = PosService_1 = class PosService {
         const allMatching = await qb.getMany();
         const total = allMatching.length;
         let totalSales = 0;
+        let totalReturns = 0;
         let totalItemsCount = 0;
         let cashTotal = 0;
         let visaTotal = 0;
@@ -343,34 +344,49 @@ let PosService = PosService_1 = class PosService {
         let creditTotal = 0;
         for (const s of allMatching) {
             const net = Number(s.netAmount) || 0;
-            totalSales += net;
-            const paid = Number(s.paidAmount !== undefined && s.paidAmount !== null
+            const retAmt = Number(s.returnedAmount || 0) || (s.status === 'RETURNED' ? net : 0);
+            totalReturns += retAmt;
+            const effectiveNet = Math.max(0, net - retAmt);
+            totalSales += effectiveNet;
+            const rawPaid = Number(s.paidAmount !== undefined && s.paidAmount !== null
                 ? s.paidAmount
                 : s.paymentMethod === 'CREDIT' || s.paymentMethod === 'آجل'
                     ? 0
                     : net);
-            const remaining = Number(s.remainingAmount !== undefined && s.remainingAmount !== null
+            const rawRemaining = Number(s.remainingAmount !== undefined && s.remainingAmount !== null
                 ? s.remainingAmount
                 : s.paymentMethod === 'CREDIT' || s.paymentMethod === 'آجل'
                     ? net
-                    : Math.max(0, net - paid));
-            creditTotal += remaining;
-            if (paid > 0) {
+                    : Math.max(0, net - rawPaid));
+            let effectiveRemaining = rawRemaining;
+            let effectivePaid = rawPaid;
+            if (retAmt > 0) {
+                if (effectiveRemaining >= retAmt) {
+                    effectiveRemaining -= retAmt;
+                }
+                else {
+                    const excess = retAmt - effectiveRemaining;
+                    effectiveRemaining = 0;
+                    effectivePaid = Math.max(0, effectivePaid - excess);
+                }
+            }
+            creditTotal += effectiveRemaining;
+            if (effectivePaid > 0) {
                 const m = (s.paymentMethod || 'CASH').toUpperCase();
                 if (m === 'CASH' || m === 'كاش') {
-                    cashTotal += paid;
+                    cashTotal += effectivePaid;
                 }
                 else if (m === 'CARD' || m === 'VISA') {
-                    visaTotal += paid;
+                    visaTotal += effectivePaid;
                 }
                 else if (m === 'INSTAPAY') {
-                    instapayTotal += paid;
+                    instapayTotal += effectivePaid;
                 }
                 else if (m === 'WALLET') {
-                    walletTotal += paid;
+                    walletTotal += effectivePaid;
                 }
                 else if (m !== 'CREDIT' && m !== 'آجل') {
-                    cashTotal += paid;
+                    cashTotal += effectivePaid;
                 }
             }
             if (s.items && Array.isArray(s.items)) {
@@ -389,6 +405,7 @@ let PosService = PosService_1 = class PosService {
             limit,
             summary: {
                 totalSales,
+                totalReturns,
                 invoicesCount: total,
                 totalItemsCount,
                 cashTotal,
@@ -568,6 +585,12 @@ let PosService = PosService_1 = class PosService {
                     where: { id: Number(originalSaleId) },
                     relations: { items: true, customer: true },
                 });
+                if (!originalSale && originalInvoiceNumber) {
+                    originalSale = await manager.findOne(branch_sale_entity_1.BranchSale, {
+                        where: { invoiceNumber: originalInvoiceNumber },
+                        relations: { items: true, customer: true },
+                    });
+                }
             }
             else if (originalInvoiceNumber) {
                 originalSale = await manager.findOne(branch_sale_entity_1.BranchSale, {
@@ -648,7 +671,12 @@ let PosService = PosService_1 = class PosService {
                 await manager.save(ledgerEntry);
             }
             if (originalSale) {
-                originalSale.status = 'RETURNED';
+                const currentReturned = Number(originalSale.returnedAmount || 0);
+                const refAmt = Number(refundAmount || 0);
+                const newReturned = currentReturned + refAmt;
+                originalSale.returnedAmount = newReturned;
+                const netAmt = Number(originalSale.netAmount || 0);
+                originalSale.status = newReturned >= netAmt ? 'RETURNED' : 'PARTIALLY_RETURNED';
                 await manager.save(originalSale);
             }
             this.cacheService.invalidatePattern(`inventory:${branchId}`);
