@@ -309,11 +309,20 @@ export class ProductsService {
   async remove(id: number): Promise<{ message: string }> {
     const product = await this.findOne(id);
     try {
+      // Clean up branch inventory and stock movements for this product
+      await this.branchInventoryRepository.delete({ productId: id });
+      try {
+        await this.stockMovementRepository.delete({ productId: id });
+      } catch (smErr) {}
+
       await this.productRepository.remove(product);
-      return { message: 'تم حذف المنتج بنجاح' };
-    } catch (err) {
+      this.cacheService.invalidatePattern('inventory:*');
+      this.cacheService.invalidatePattern('products:*');
+      return { message: 'تم حذف المنتج من المخزون بنجاح' };
+    } catch (err: any) {
+      console.error('[ProductsService.remove] error:', err);
       throw new BadRequestException(
-        'لا يمكن حذف هذا الصنف لأنه مرتبط بعمليات توريد أو فواتير سابقة في النظام.',
+        'لا يمكن حذف هذا الصنف لأنه مرتبط بعمليات بيع أو فواتير سابقة في النظام. يمكنك تعديل الكمية إلى 0 بدلاً من ذلك.',
       );
     }
   }

@@ -81,7 +81,7 @@ export class ProductsController {
   }
 
   @Delete(':id')
-  @Roles(RoleEnum.HQ_ADMIN, RoleEnum.HQ_STAFF)
+  @Roles(RoleEnum.SUPER_ADMIN, RoleEnum.HQ_ADMIN, RoleEnum.HQ_STAFF, RoleEnum.BRANCH_MANAGER)
   async remove(@Param('id', ParseIntPipe) id: number) {
     return this.productsService.remove(id);
   }
