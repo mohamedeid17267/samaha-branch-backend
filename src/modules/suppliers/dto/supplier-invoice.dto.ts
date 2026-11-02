@@ -28,6 +28,10 @@ export class SupplierInvoiceDto {
   notes?: string;
 
   @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
   @IsNumber()
   branchId?: number;
 }

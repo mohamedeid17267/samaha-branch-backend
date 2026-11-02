@@ -166,7 +166,11 @@ export class SuppliersService {
     invoiceEntry.amount = totalAmount;
     invoiceEntry.paidAmount = paidAmount;
     invoiceEntry.balanceAfter = afterInvoiceDebt;
-    invoiceEntry.description = dto.notes?.trim() || `فاتورة توريد بضاعة${dto.invoiceNumber ? ` #${dto.invoiceNumber}` : ''}`;
+    let desc = dto.notes?.trim() || '';
+    if (dto.imageUrl && !desc.includes(dto.imageUrl)) {
+      desc = desc ? `${desc}\n[رابط الفاتورة: ${dto.imageUrl}]` : `[رابط الفاتورة: ${dto.imageUrl}]`;
+    }
+    invoiceEntry.description = desc || `فاتورة توريد بضاعة${dto.invoiceNumber ? ` #${dto.invoiceNumber}` : ''}`;
     invoiceEntry.invoiceDate = invoiceDate;
     invoiceEntry.recordedBy = username || 'المستخدم';
 
