@@ -35,8 +35,9 @@ let ActivityController = class ActivityController {
     async createNotification(body) {
         return this.activityService.createNotification(body);
     }
-    async getAuditLogs() {
-        return this.activityService.getAuditLogs();
+    async getAuditLogs(limit, search, action) {
+        const lim = limit ? parseInt(limit, 10) : 500;
+        return this.activityService.getAuditLogs(lim, search, action);
     }
     async createAuditLog(body) {
         return this.activityService.createAuditLog(body.username, body.action, body.details);
@@ -73,8 +74,11 @@ __decorate([
 ], ActivityController.prototype, "createNotification", null);
 __decorate([
     (0, common_1.Get)('audit-logs'),
+    __param(0, (0, common_1.Query)('limit')),
+    __param(1, (0, common_1.Query)('search')),
+    __param(2, (0, common_1.Query)('action')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [String, String, String]),
     __metadata("design:returntype", Promise)
 ], ActivityController.prototype, "getAuditLogs", null);
 __decorate([

@@ -15,5 +15,5 @@ export declare class ActivityService {
     markAsRead(id: number): Promise<Notification>;
     markAllAsRead(branchId?: number): Promise<void>;
     createAuditLog(username: string, action: string, details?: string): Promise<AuditLog>;
-    getAuditLogs(): Promise<AuditLog[]>;
+    getAuditLogs(limit?: number, search?: string, action?: string): Promise<AuditLog[]>;
 }

@@ -5,5 +5,6 @@ export declare class SupplierInvoiceDto {
     paidAmount?: number;
     paymentMethod?: string;
     notes?: string;
+    imageUrl?: string;
     branchId?: number;
 }

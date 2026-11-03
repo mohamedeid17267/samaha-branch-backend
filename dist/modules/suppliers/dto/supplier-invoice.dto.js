@@ -18,6 +18,7 @@ class SupplierInvoiceDto {
     paidAmount;
     paymentMethod;
     notes;
+    imageUrl;
     branchId;
 }
 exports.SupplierInvoiceDto = SupplierInvoiceDto;
@@ -53,6 +54,11 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], SupplierInvoiceDto.prototype, "notes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SupplierInvoiceDto.prototype, "imageUrl", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsNumber)(),

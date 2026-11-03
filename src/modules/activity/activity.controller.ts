@@ -46,8 +46,13 @@ export class ActivityController {
   }
 
   @Get('audit-logs')
-  async getAuditLogs() {
-    return this.activityService.getAuditLogs();
+  async getAuditLogs(
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('action') action?: string,
+  ) {
+    const lim = limit ? parseInt(limit, 10) : 500;
+    return this.activityService.getAuditLogs(lim, search, action);
   }
 
   @Post('audit-logs')

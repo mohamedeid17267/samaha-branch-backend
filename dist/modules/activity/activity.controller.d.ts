@@ -13,7 +13,7 @@ export declare class ActivityController {
         message: string;
         type?: string;
     }): Promise<import("../../database/entities/notification.entity").Notification>;
-    getAuditLogs(): Promise<import("../../database/entities/audit-log.entity").AuditLog[]>;
+    getAuditLogs(limit?: string, search?: string, action?: string): Promise<import("../../database/entities/audit-log.entity").AuditLog[]>;
     createAuditLog(body: {
         username: string;
         action: string;

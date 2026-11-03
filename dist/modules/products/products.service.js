@@ -235,11 +235,19 @@ let ProductsService = class ProductsService {
     async remove(id) {
         const product = await this.findOne(id);
         try {
+            await this.branchInventoryRepository.delete({ productId: id });
+            try {
+                await this.stockMovementRepository.delete({ productId: id });
+            }
+            catch (smErr) { }
             await this.productRepository.remove(product);
-            return { message: 'تم حذف المنتج بنجاح' };
+            this.cacheService.invalidatePattern('inventory:*');
+            this.cacheService.invalidatePattern('products:*');
+            return { message: 'تم حذف المنتج من المخزون بنجاح' };
         }
         catch (err) {
-            throw new common_1.BadRequestException('لا يمكن حذف هذا الصنف لأنه مرتبط بعمليات توريد أو فواتير سابقة في النظام.');
+            console.error('[ProductsService.remove] error:', err);
+            throw new common_1.BadRequestException('لا يمكن حذف هذا الصنف لأنه مرتبط بعمليات بيع أو فواتير سابقة في النظام. يمكنك تعديل الكمية إلى 0 بدلاً من ذلك.');
         }
     }
     async updateGlobalStock(id, quantity) {

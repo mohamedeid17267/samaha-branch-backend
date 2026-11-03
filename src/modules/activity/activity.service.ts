@@ -72,10 +72,25 @@ export class ActivityService {
     return this.auditLogRepository.save(log);
   }
 
-  async getAuditLogs(): Promise<AuditLog[]> {
-    return this.auditLogRepository.find({
-      order: { createdAt: 'DESC' },
-      take: 100,
-    });
+  async getAuditLogs(
+    limit: number = 500,
+    search?: string,
+    action?: string,
+  ): Promise<AuditLog[]> {
+    const qb = this.auditLogRepository.createQueryBuilder('log');
+
+    if (action && action !== 'ALL') {
+      qb.andWhere('log.action = :action', { action });
+    }
+
+    if (search && search.trim() !== '') {
+      const term = search.trim();
+      qb.andWhere(
+        '(log.username LIKE :search OR log.action LIKE :search OR log.details LIKE :search)',
+        { search: `%${term}%` },
+      );
+    }
+
+    return qb.orderBy('log.createdAt', 'DESC').take(limit).getMany();
   }
 }
