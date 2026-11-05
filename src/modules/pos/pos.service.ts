@@ -13,6 +13,8 @@ import { Product } from '../../database/entities/product.entity';
 import { StockMovement, StockMovementType } from '../../database/entities/stock-movement.entity';
 import { Customer } from '../../database/entities/customer.entity';
 import { CustomerDebtLedger } from '../../database/entities/customer-debt-ledger.entity';
+import { BranchExpense } from '../../database/entities/branch-expense.entity';
+import { SupplierDebtLedger } from '../../database/entities/supplier-debt-ledger.entity';
 import { TransactionType } from '../../common/enums/transaction-type.enum';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { ActivityService } from '../activity/activity.service';
@@ -660,7 +662,58 @@ export class PosService {
       }
     }
 
+    // Query branch expenses during this date range (Treasury Outflows)
+    const expenseQb = this.dataSource
+      .getRepository(BranchExpense)
+      .createQueryBuilder('expense')
+      .where('expense.branchId = :branchId', { branchId });
+
+    if (startDate) {
+      expenseQb.andWhere('(expense.createdAt >= :startDate OR expense.expenseDate >= :startDay)', {
+        startDate: new Date(startDate),
+        startDay: startDate.split('T')[0],
+      });
+    }
+    if (endDate) {
+      expenseQb.andWhere('(expense.createdAt <= :endDate OR expense.expenseDate <= :endDay)', {
+        endDate: new Date(endDate),
+        endDay: endDate.split('T')[0],
+      });
+    }
+    expenseQb.orderBy('expense.createdAt', 'DESC');
+    const expenses = await expenseQb.getMany().catch(() => []);
+
+    // Query supplier debt payments during this date range (Treasury Outflows)
+    const supplierPayQb = this.dataSource
+      .getRepository(SupplierDebtLedger)
+      .createQueryBuilder('ledger')
+      .leftJoinAndSelect('ledger.supplier', 'supplier')
+      .where('(ledger.branchId = :branchId OR ledger.branchId IS NULL)', { branchId })
+      .andWhere('ledger.transactionType = :txType', { txType: TransactionType.PAYMENT });
+
+    if (startDate) {
+      supplierPayQb.andWhere('ledger.createdAt >= :startDate', { startDate: new Date(startDate) });
+    }
+    if (endDate) {
+      supplierPayQb.andWhere('ledger.createdAt <= :endDate', { endDate: new Date(endDate) });
+    }
+    supplierPayQb.orderBy('ledger.createdAt', 'DESC');
+    const supplierPayments = await supplierPayQb.getMany().catch(() => []);
+
+    let totalExpenses = 0;
+    for (const exp of expenses) {
+      totalExpenses += Number(exp.amount || 0);
+    }
+
+    let totalSupplierPayments = 0;
+    for (const sp of supplierPayments) {
+      totalSupplierPayments += Number(sp.amount || sp.paidAmount || 0);
+    }
+
+    const totalOutflows = totalExpenses + totalSupplierPayments;
     const totalCollected = cash + instapay + wallet + card;
+    const netTreasuryCash = cash - totalOutflows;
+    const netTreasuryTotal = totalCollected - totalOutflows;
 
     return {
       totals: {
@@ -671,7 +724,14 @@ export class PosService {
         credit,
         totalCollected,
         totalSales,
+        totalExpenses,
+        totalSupplierPayments,
+        totalOutflows,
+        netTreasuryCash,
+        netTreasuryTotal,
         invoicesCount: sales.length,
+        expensesCount: expenses.length,
+        supplierPaymentsCount: supplierPayments.length,
       },
       counts: {
         cash: cashCount,
@@ -679,9 +739,13 @@ export class PosService {
         wallet: walletCount,
         card: cardCount,
         credit: creditCount,
+        expenses: expenses.length,
+        supplierPayments: supplierPayments.length,
       },
       sales,
       debtPayments: externalDebtPayments,
+      expenses,
+      supplierPayments,
     };
   }
 
