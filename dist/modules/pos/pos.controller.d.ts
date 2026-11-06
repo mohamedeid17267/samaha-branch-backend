@@ -47,7 +47,14 @@ export declare class PosController {
             credit: number;
             totalCollected: number;
             totalSales: number;
+            totalExpenses: number;
+            totalSupplierPayments: number;
+            totalOutflows: number;
+            netTreasuryCash: number;
+            netTreasuryTotal: number;
             invoicesCount: number;
+            expensesCount: number;
+            supplierPaymentsCount: number;
         };
         counts: {
             cash: number;
@@ -55,8 +62,12 @@ export declare class PosController {
             wallet: number;
             card: number;
             credit: number;
+            expenses: number;
+            supplierPayments: number;
         };
         sales: import("../../database/entities/branch-sale.entity").BranchSale[];
         debtPayments: import("../../database/entities/customer-debt-ledger.entity").CustomerDebtLedger[];
+        expenses: import("../../database/entities/branch-expense.entity").BranchExpense[] | never[];
+        supplierPayments: never[] | import("../../database/entities/supplier-debt-ledger.entity").SupplierDebtLedger[];
     }>;
 }

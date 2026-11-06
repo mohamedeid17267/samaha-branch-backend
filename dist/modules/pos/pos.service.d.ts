@@ -1,6 +1,8 @@
 import { Repository, DataSource } from 'typeorm';
 import { BranchSale } from '../../database/entities/branch-sale.entity';
 import { CustomerDebtLedger } from '../../database/entities/customer-debt-ledger.entity';
+import { BranchExpense } from '../../database/entities/branch-expense.entity';
+import { SupplierDebtLedger } from '../../database/entities/supplier-debt-ledger.entity';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { ActivityService } from '../activity/activity.service';
 import { MemoryCacheService } from '../../common/services/cache.service';
@@ -40,7 +42,14 @@ export declare class PosService {
             credit: number;
             totalCollected: number;
             totalSales: number;
+            totalExpenses: number;
+            totalSupplierPayments: number;
+            totalOutflows: number;
+            netTreasuryCash: number;
+            netTreasuryTotal: number;
             invoicesCount: number;
+            expensesCount: number;
+            supplierPaymentsCount: number;
         };
         counts: {
             cash: number;
@@ -48,9 +57,13 @@ export declare class PosService {
             wallet: number;
             card: number;
             credit: number;
+            expenses: number;
+            supplierPayments: number;
         };
         sales: BranchSale[];
         debtPayments: CustomerDebtLedger[];
+        expenses: BranchExpense[] | never[];
+        supplierPayments: never[] | SupplierDebtLedger[];
     }>;
     syncBatch(batchData: {
         branchId?: number;

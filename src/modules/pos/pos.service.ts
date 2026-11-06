@@ -90,39 +90,52 @@ export class PosService {
 
       let totalAmount = 0;
       const saleItems: BranchSaleItem[] = [];
-      const inventoryUpdates: Array<{ id: number; newQty: number }> = [];
+      const invUpdatesMap = new Map<number, { id: number; newQty: number }>();
 
       for (const itemDto of items) {
-        const inventory = invMap.get(Number(itemDto.productId));
+        const pId = Number(itemDto.productId);
+        const inventory = invMap.get(pId);
         if (!inventory) {
           throw new NotFoundException(
-            `Product ID ${itemDto.productId} not found in branch inventory`,
+            `Product ID ${pId} not found in branch inventory`,
           );
         }
 
-        if (inventory.currentQuantity < itemDto.quantity) {
-          if (effectiveIdempotencyKey) {
-            this.logger.warn(
-              `[Offline Reconciliation] Stock negative for Product ${itemDto.productId} (Available: ${inventory.currentQuantity}, Sold: ${itemDto.quantity})`,
-            );
-          } else {
-            throw new BadRequestException(
-              `Insufficient stock for Product ID ${itemDto.productId}`,
-            );
+        const isManual =
+          pId === 1500027 ||
+          inventory.product?.category === 'خدمات' ||
+          inventory.product?.category === 'صنف يدوي' ||
+          inventory.product?.sku === 'MANUAL-POS-ITEM';
+
+        if (!isManual) {
+          const invId = inventory.id;
+          const currentQtyInMap = invUpdatesMap.has(invId)
+            ? invUpdatesMap.get(invId)!.newQty
+            : Number(inventory.currentQuantity || 0);
+
+          if (currentQtyInMap < itemDto.quantity) {
+            if (effectiveIdempotencyKey) {
+              this.logger.warn(
+                `[Offline Reconciliation] Stock negative for Product ${pId} (Available: ${currentQtyInMap}, Sold: ${itemDto.quantity})`,
+              );
+            } else {
+              throw new BadRequestException(
+                `Insufficient stock for Product ID ${pId}`,
+              );
+            }
           }
+
+          const newQty = currentQtyInMap - itemDto.quantity;
+          inventory.currentQuantity = newQty;
+          invUpdatesMap.set(invId, { id: invId, newQty });
+
+          pendingMovements.push({
+            productId: pId,
+            quantity: itemDto.quantity,
+            balanceBefore: currentQtyInMap,
+            balanceAfter: newQty,
+          });
         }
-
-        const prevQty = Number(inventory.currentQuantity || 0);
-        const newQty = prevQty - itemDto.quantity;
-        inventory.currentQuantity = newQty;
-        inventoryUpdates.push({ id: inventory.id, newQty });
-
-        pendingMovements.push({
-          productId: itemDto.productId,
-          quantity: itemDto.quantity,
-          balanceBefore: prevQty,
-          balanceAfter: newQty,
-        });
 
         // Determine price based on selected saleType: RETAIL, WHOLESALE, or WEBSITE
         let unitPrice = 0;
@@ -157,7 +170,7 @@ export class PosService {
         totalAmount += subTotal;
 
         const saleItem = manager.create(BranchSaleItem, {
-          productId: itemDto.productId,
+          productId: pId,
           quantity: itemDto.quantity,
           unitPrice,
           subTotal,
@@ -167,9 +180,10 @@ export class PosService {
       }
 
       // 2. High-speed bulk update for all branch inventories in ONE query
-      if (inventoryUpdates.length > 0) {
-        const ids = inventoryUpdates.map((u) => u.id).join(',');
-        const cases = inventoryUpdates
+      if (invUpdatesMap.size > 0) {
+        const updates = Array.from(invUpdatesMap.values());
+        const ids = updates.map((u) => u.id).join(',');
+        const cases = updates
           .map((u) => `WHEN ${u.id} THEN ${u.newQty}`)
           .join(' ');
         await manager.query(
@@ -237,11 +251,26 @@ export class PosService {
 
       const savedSale = await manager.save(sale);
 
-      // 3. High-speed bulk insert of BranchSaleItems in ONE query
-      for (const item of saleItems) {
-        item.saleId = savedSale.id;
+      // 3. Ultra-fast bulk insert of BranchSaleItems in ONE query (bypasses slow N-query loop)
+      const saleItemValues = saleItems.map((item) => ({
+        saleId: savedSale.id,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        subTotal: item.subTotal,
+      }));
+
+      if (saleItemValues.length > 0) {
+        for (let i = 0; i < saleItemValues.length; i += 250) {
+          const chunk = saleItemValues.slice(i, i + 250);
+          await manager
+            .createQueryBuilder()
+            .insert()
+            .into(BranchSaleItem)
+            .values(chunk)
+            .execute();
+        }
       }
-      await manager.save(BranchSaleItem, saleItems);
 
       // Force update createdAt if this was an offline sale synced at a later time
       if (validCreatedAt) {
@@ -324,9 +353,9 @@ export class PosService {
         await manager.save(customer);
       }
 
-      // 4. High-speed bulk insert of StockMovements in ONE query
-      const movements = pendingMovements.map((pm) =>
-        manager.create(StockMovement, {
+      // 4. Ultra-fast bulk insert of StockMovements in ONE query (bypasses slow N-query loop)
+      if (pendingMovements.length > 0) {
+        const movementValues = pendingMovements.map((pm) => ({
           productId: pm.productId,
           branchId,
           type: StockMovementType.OUT_SALE,
@@ -337,11 +366,18 @@ export class PosService {
           referenceId: String(savedSale.id),
           notes: `فاتورة بيع كاشير POS رقم #${savedSale.id}`,
           performedBy: username,
-          createdAt: validCreatedAt || undefined,
-        })
-      );
-      if (movements.length > 0) {
-        await manager.save(StockMovement, movements);
+          createdAt: validCreatedAt || new Date(),
+        }));
+
+        for (let i = 0; i < movementValues.length; i += 250) {
+          const chunk = movementValues.slice(i, i + 250);
+          await manager
+            .createQueryBuilder()
+            .insert()
+            .into(StockMovement)
+            .values(chunk)
+            .execute();
+        }
       }
 
       savedSale.items = saleItems;
@@ -361,43 +397,36 @@ export class PosService {
       }`,
     ).catch((err) => this.logger.warn(`Audit log error: ${err.message}`));
 
-    // Background sync to Linea website (non-blocking)
+    // Background sync to Linea website (100% non-blocking via setImmediate to return HTTP response in milliseconds)
     if (completedSale && Array.isArray(completedSale.items)) {
       const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
       const lineaUrl = process.env.LINEA_WEBSITE_URL;
       const skipWebsiteSync = isVercel && (!lineaUrl || lineaUrl.includes('localhost') || lineaUrl.includes('127.0.0.1'));
 
       if (!skipWebsiteSync) {
-        const syncService = this.websiteSyncService || new WebsiteSyncService();
-        const processedProductIds = new Set<number>();
+        setImmediate(async () => {
+          try {
+            const syncService = this.websiteSyncService || new WebsiteSyncService();
+            const processedProductIds = new Set<number>();
 
-        for (const item of completedSale.items) {
-          if (!item.productId || processedProductIds.has(item.productId)) continue;
-          processedProductIds.add(item.productId);
+            for (const item of completedSale.items) {
+              if (!item.productId || processedProductIds.has(item.productId)) continue;
+              processedProductIds.add(item.productId);
 
-          const pm = [...pendingMovements].reverse().find((m) => m.productId === item.productId);
-          const newStock = pm ? pm.balanceAfter : 0;
-          const sku = item.product?.sku;
-          const websitePrice = Number(item.product?.websitePrice || item.product?.retailPrice || 0);
-          const wholesalePrice = Number(item.product?.wholesalePrice || 0);
+              const pm = [...pendingMovements].reverse().find((m) => m.productId === item.productId);
+              const newStock = pm ? pm.balanceAfter : 0;
+              const sku = item.product?.sku;
+              const websitePrice = Number(item.product?.websitePrice || item.product?.retailPrice || 0);
+              const wholesalePrice = Number(item.product?.wholesalePrice || 0);
 
-          if (sku) {
-            syncService.syncStock(sku, newStock, { price: websitePrice, wholesalePrice }).catch(() => {});
-          } else {
-            this.dataSource
-              .getRepository(Product)
-              .findOne({ where: { id: item.productId } })
-              .then((p) => {
-                if (p?.sku) {
-                  syncService.syncStock(p.sku, newStock, {
-                    price: Number(p.websitePrice || p.retailPrice || 0),
-                    wholesalePrice: Number(p.wholesalePrice || 0),
-                  }).catch(() => {});
-                }
-              })
-              .catch(() => {});
+              if (sku) {
+                syncService.syncStock(sku, newStock, { price: websitePrice, wholesalePrice }).catch(() => {});
+              }
+            }
+          } catch (syncErr: any) {
+            this.logger.warn(`Background website sync error: ${syncErr.message}`);
           }
-        }
+        });
       }
     }
 

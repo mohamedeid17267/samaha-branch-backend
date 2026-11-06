@@ -20,10 +20,11 @@ const typeorm_2 = require("typeorm");
 const branch_sale_entity_1 = require("../../database/entities/branch-sale.entity");
 const branch_sale_item_entity_1 = require("../../database/entities/branch-sale-item.entity");
 const branch_inventory_entity_1 = require("../../database/entities/branch-inventory.entity");
-const product_entity_1 = require("../../database/entities/product.entity");
 const stock_movement_entity_1 = require("../../database/entities/stock-movement.entity");
 const customer_entity_1 = require("../../database/entities/customer.entity");
 const customer_debt_ledger_entity_1 = require("../../database/entities/customer-debt-ledger.entity");
+const branch_expense_entity_1 = require("../../database/entities/branch-expense.entity");
+const supplier_debt_ledger_entity_1 = require("../../database/entities/supplier-debt-ledger.entity");
 const transaction_type_enum_1 = require("../../common/enums/transaction-type.enum");
 const activity_service_1 = require("../activity/activity.service");
 const cache_service_1 = require("../../common/services/cache.service");
@@ -71,30 +72,40 @@ let PosService = PosService_1 = class PosService {
             }
             let totalAmount = 0;
             const saleItems = [];
-            const inventoryUpdates = [];
+            const invUpdatesMap = new Map();
             for (const itemDto of items) {
-                const inventory = invMap.get(Number(itemDto.productId));
+                const pId = Number(itemDto.productId);
+                const inventory = invMap.get(pId);
                 if (!inventory) {
-                    throw new common_1.NotFoundException(`Product ID ${itemDto.productId} not found in branch inventory`);
+                    throw new common_1.NotFoundException(`Product ID ${pId} not found in branch inventory`);
                 }
-                if (inventory.currentQuantity < itemDto.quantity) {
-                    if (effectiveIdempotencyKey) {
-                        this.logger.warn(`[Offline Reconciliation] Stock negative for Product ${itemDto.productId} (Available: ${inventory.currentQuantity}, Sold: ${itemDto.quantity})`);
+                const isManual = pId === 1500027 ||
+                    inventory.product?.category === 'خدمات' ||
+                    inventory.product?.category === 'صنف يدوي' ||
+                    inventory.product?.sku === 'MANUAL-POS-ITEM';
+                if (!isManual) {
+                    const invId = inventory.id;
+                    const currentQtyInMap = invUpdatesMap.has(invId)
+                        ? invUpdatesMap.get(invId).newQty
+                        : Number(inventory.currentQuantity || 0);
+                    if (currentQtyInMap < itemDto.quantity) {
+                        if (effectiveIdempotencyKey) {
+                            this.logger.warn(`[Offline Reconciliation] Stock negative for Product ${pId} (Available: ${currentQtyInMap}, Sold: ${itemDto.quantity})`);
+                        }
+                        else {
+                            throw new common_1.BadRequestException(`Insufficient stock for Product ID ${pId}`);
+                        }
                     }
-                    else {
-                        throw new common_1.BadRequestException(`Insufficient stock for Product ID ${itemDto.productId}`);
-                    }
+                    const newQty = currentQtyInMap - itemDto.quantity;
+                    inventory.currentQuantity = newQty;
+                    invUpdatesMap.set(invId, { id: invId, newQty });
+                    pendingMovements.push({
+                        productId: pId,
+                        quantity: itemDto.quantity,
+                        balanceBefore: currentQtyInMap,
+                        balanceAfter: newQty,
+                    });
                 }
-                const prevQty = Number(inventory.currentQuantity || 0);
-                const newQty = prevQty - itemDto.quantity;
-                inventory.currentQuantity = newQty;
-                inventoryUpdates.push({ id: inventory.id, newQty });
-                pendingMovements.push({
-                    productId: itemDto.productId,
-                    quantity: itemDto.quantity,
-                    balanceBefore: prevQty,
-                    balanceAfter: newQty,
-                });
                 let unitPrice = 0;
                 const effectiveSaleType = (saleType || 'RETAIL').toUpperCase();
                 if (effectiveSaleType === 'WHOLESALE') {
@@ -124,7 +135,7 @@ let PosService = PosService_1 = class PosService {
                 const subTotal = unitPrice * itemDto.quantity;
                 totalAmount += subTotal;
                 const saleItem = manager.create(branch_sale_item_entity_1.BranchSaleItem, {
-                    productId: itemDto.productId,
+                    productId: pId,
                     quantity: itemDto.quantity,
                     unitPrice,
                     subTotal,
@@ -132,9 +143,10 @@ let PosService = PosService_1 = class PosService {
                 saleItem.product = inventory.product;
                 saleItems.push(saleItem);
             }
-            if (inventoryUpdates.length > 0) {
-                const ids = inventoryUpdates.map((u) => u.id).join(',');
-                const cases = inventoryUpdates
+            if (invUpdatesMap.size > 0) {
+                const updates = Array.from(invUpdatesMap.values());
+                const ids = updates.map((u) => u.id).join(',');
+                const cases = updates
                     .map((u) => `WHEN ${u.id} THEN ${u.newQty}`)
                     .join(' ');
                 await manager.query(`UPDATE branch_inventories SET currentQuantity = CASE id ${cases} END WHERE id IN (${ids})`);
@@ -189,10 +201,24 @@ let PosService = PosService_1 = class PosService {
                 createdAt: validCreatedAt || undefined,
             });
             const savedSale = await manager.save(sale);
-            for (const item of saleItems) {
-                item.saleId = savedSale.id;
+            const saleItemValues = saleItems.map((item) => ({
+                saleId: savedSale.id,
+                productId: item.productId,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                subTotal: item.subTotal,
+            }));
+            if (saleItemValues.length > 0) {
+                for (let i = 0; i < saleItemValues.length; i += 250) {
+                    const chunk = saleItemValues.slice(i, i + 250);
+                    await manager
+                        .createQueryBuilder()
+                        .insert()
+                        .into(branch_sale_item_entity_1.BranchSaleItem)
+                        .values(chunk)
+                        .execute();
+                }
             }
-            await manager.save(branch_sale_item_entity_1.BranchSaleItem, saleItems);
             if (validCreatedAt) {
                 await manager.update(branch_sale_entity_1.BranchSale, { id: savedSale.id }, { createdAt: validCreatedAt });
                 savedSale.createdAt = validCreatedAt;
@@ -251,21 +277,29 @@ let PosService = PosService_1 = class PosService {
                 customer.currentDebt = Number(customer.totalInvoiced) - Number(customer.totalPaid);
                 await manager.save(customer);
             }
-            const movements = pendingMovements.map((pm) => manager.create(stock_movement_entity_1.StockMovement, {
-                productId: pm.productId,
-                branchId,
-                type: stock_movement_entity_1.StockMovementType.OUT_SALE,
-                quantity: -pm.quantity,
-                balanceBefore: pm.balanceBefore,
-                balanceAfter: pm.balanceAfter,
-                referenceType: 'POS_SALE',
-                referenceId: String(savedSale.id),
-                notes: `فاتورة بيع كاشير POS رقم #${savedSale.id}`,
-                performedBy: username,
-                createdAt: validCreatedAt || undefined,
-            }));
-            if (movements.length > 0) {
-                await manager.save(stock_movement_entity_1.StockMovement, movements);
+            if (pendingMovements.length > 0) {
+                const movementValues = pendingMovements.map((pm) => ({
+                    productId: pm.productId,
+                    branchId,
+                    type: stock_movement_entity_1.StockMovementType.OUT_SALE,
+                    quantity: -pm.quantity,
+                    balanceBefore: pm.balanceBefore,
+                    balanceAfter: pm.balanceAfter,
+                    referenceType: 'POS_SALE',
+                    referenceId: String(savedSale.id),
+                    notes: `فاتورة بيع كاشير POS رقم #${savedSale.id}`,
+                    performedBy: username,
+                    createdAt: validCreatedAt || new Date(),
+                }));
+                for (let i = 0; i < movementValues.length; i += 250) {
+                    const chunk = movementValues.slice(i, i + 250);
+                    await manager
+                        .createQueryBuilder()
+                        .insert()
+                        .into(stock_movement_entity_1.StockMovement)
+                        .values(chunk)
+                        .execute();
+                }
             }
             savedSale.items = saleItems;
             savedSale.customer = customer || undefined;
@@ -278,35 +312,28 @@ let PosService = PosService_1 = class PosService {
             const lineaUrl = process.env.LINEA_WEBSITE_URL;
             const skipWebsiteSync = isVercel && (!lineaUrl || lineaUrl.includes('localhost') || lineaUrl.includes('127.0.0.1'));
             if (!skipWebsiteSync) {
-                const syncService = this.websiteSyncService || new website_sync_service_1.WebsiteSyncService();
-                const processedProductIds = new Set();
-                for (const item of completedSale.items) {
-                    if (!item.productId || processedProductIds.has(item.productId))
-                        continue;
-                    processedProductIds.add(item.productId);
-                    const pm = [...pendingMovements].reverse().find((m) => m.productId === item.productId);
-                    const newStock = pm ? pm.balanceAfter : 0;
-                    const sku = item.product?.sku;
-                    const websitePrice = Number(item.product?.websitePrice || item.product?.retailPrice || 0);
-                    const wholesalePrice = Number(item.product?.wholesalePrice || 0);
-                    if (sku) {
-                        syncService.syncStock(sku, newStock, { price: websitePrice, wholesalePrice }).catch(() => { });
-                    }
-                    else {
-                        this.dataSource
-                            .getRepository(product_entity_1.Product)
-                            .findOne({ where: { id: item.productId } })
-                            .then((p) => {
-                            if (p?.sku) {
-                                syncService.syncStock(p.sku, newStock, {
-                                    price: Number(p.websitePrice || p.retailPrice || 0),
-                                    wholesalePrice: Number(p.wholesalePrice || 0),
-                                }).catch(() => { });
+                setImmediate(async () => {
+                    try {
+                        const syncService = this.websiteSyncService || new website_sync_service_1.WebsiteSyncService();
+                        const processedProductIds = new Set();
+                        for (const item of completedSale.items) {
+                            if (!item.productId || processedProductIds.has(item.productId))
+                                continue;
+                            processedProductIds.add(item.productId);
+                            const pm = [...pendingMovements].reverse().find((m) => m.productId === item.productId);
+                            const newStock = pm ? pm.balanceAfter : 0;
+                            const sku = item.product?.sku;
+                            const websitePrice = Number(item.product?.websitePrice || item.product?.retailPrice || 0);
+                            const wholesalePrice = Number(item.product?.wholesalePrice || 0);
+                            if (sku) {
+                                syncService.syncStock(sku, newStock, { price: websitePrice, wholesalePrice }).catch(() => { });
                             }
-                        })
-                            .catch(() => { });
+                        }
                     }
-                }
+                    catch (syncErr) {
+                        this.logger.warn(`Background website sync error: ${syncErr.message}`);
+                    }
+                });
             }
         }
         return completedSale;
@@ -518,7 +545,50 @@ let PosService = PosService_1 = class PosService {
                 cashCount++;
             }
         }
+        const expenseQb = this.dataSource
+            .getRepository(branch_expense_entity_1.BranchExpense)
+            .createQueryBuilder('expense')
+            .where('expense.branchId = :branchId', { branchId });
+        if (startDate) {
+            expenseQb.andWhere('(expense.createdAt >= :startDate OR expense.expenseDate >= :startDay)', {
+                startDate: new Date(startDate),
+                startDay: startDate.split('T')[0],
+            });
+        }
+        if (endDate) {
+            expenseQb.andWhere('(expense.createdAt <= :endDate OR expense.expenseDate <= :endDay)', {
+                endDate: new Date(endDate),
+                endDay: endDate.split('T')[0],
+            });
+        }
+        expenseQb.orderBy('expense.createdAt', 'DESC');
+        const expenses = await expenseQb.getMany().catch(() => []);
+        const supplierPayQb = this.dataSource
+            .getRepository(supplier_debt_ledger_entity_1.SupplierDebtLedger)
+            .createQueryBuilder('ledger')
+            .leftJoinAndSelect('ledger.supplier', 'supplier')
+            .where('(ledger.branchId = :branchId OR ledger.branchId IS NULL)', { branchId })
+            .andWhere('ledger.transactionType = :txType', { txType: transaction_type_enum_1.TransactionType.PAYMENT });
+        if (startDate) {
+            supplierPayQb.andWhere('ledger.createdAt >= :startDate', { startDate: new Date(startDate) });
+        }
+        if (endDate) {
+            supplierPayQb.andWhere('ledger.createdAt <= :endDate', { endDate: new Date(endDate) });
+        }
+        supplierPayQb.orderBy('ledger.createdAt', 'DESC');
+        const supplierPayments = await supplierPayQb.getMany().catch(() => []);
+        let totalExpenses = 0;
+        for (const exp of expenses) {
+            totalExpenses += Number(exp.amount || 0);
+        }
+        let totalSupplierPayments = 0;
+        for (const sp of supplierPayments) {
+            totalSupplierPayments += Number(sp.amount || sp.paidAmount || 0);
+        }
+        const totalOutflows = totalExpenses + totalSupplierPayments;
         const totalCollected = cash + instapay + wallet + card;
+        const netTreasuryCash = cash - totalOutflows;
+        const netTreasuryTotal = totalCollected - totalOutflows;
         return {
             totals: {
                 cash,
@@ -528,7 +598,14 @@ let PosService = PosService_1 = class PosService {
                 credit,
                 totalCollected,
                 totalSales,
+                totalExpenses,
+                totalSupplierPayments,
+                totalOutflows,
+                netTreasuryCash,
+                netTreasuryTotal,
                 invoicesCount: sales.length,
+                expensesCount: expenses.length,
+                supplierPaymentsCount: supplierPayments.length,
             },
             counts: {
                 cash: cashCount,
@@ -536,9 +613,13 @@ let PosService = PosService_1 = class PosService {
                 wallet: walletCount,
                 card: cardCount,
                 credit: creditCount,
+                expenses: expenses.length,
+                supplierPayments: supplierPayments.length,
             },
             sales,
             debtPayments: externalDebtPayments,
+            expenses,
+            supplierPayments,
         };
     }
     async syncBatch(batchData, username = 'OfflineSync') {
