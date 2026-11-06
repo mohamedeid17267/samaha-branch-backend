@@ -970,5 +970,129 @@ export class PosService {
       };
     });
   }
+
+  async updateSale(idOrInvoice: string | number, updateDto: any, username: string) {
+    return this.dataSource.transaction(async (manager) => {
+      let sale: BranchSale | null = null;
+      if (!isNaN(Number(idOrInvoice)) && Number(idOrInvoice) > 0) {
+        sale = await manager.findOne(BranchSale, {
+          where: { id: Number(idOrInvoice) },
+          relations: { items: { product: true }, branch: true, customer: true },
+        });
+      }
+      if (!sale) {
+        sale = await manager.findOne(BranchSale, {
+          where: [
+            { invoiceNumber: String(idOrInvoice) },
+            { offlineReferenceId: String(idOrInvoice) },
+            { idempotencyKey: String(idOrInvoice) },
+          ],
+          relations: { items: { product: true }, branch: true, customer: true },
+        });
+      }
+
+      if (!sale) {
+        throw new NotFoundException(`الفاتورة [${idOrInvoice}] غير موجودة`);
+      }
+
+      const branchId = sale.branchId;
+
+      // 1. Reconcile items and inventory if items are provided
+      if (Array.isArray(updateDto.items) && updateDto.items.length > 0) {
+        // Restore stock of previous items
+        for (const oldItem of sale.items || []) {
+          const pId = Number(oldItem.productId);
+          const isManual = pId === 1500027 || oldItem.product?.category === 'خدمات' || oldItem.product?.sku === 'MANUAL-POS-ITEM';
+          if (!isManual) {
+            await manager.query(
+              `UPDATE branch_inventories SET currentQuantity = currentQuantity + ? WHERE branchId = ? AND productId = ?`,
+              [oldItem.quantity, branchId, pId],
+            );
+          }
+        }
+
+        // Deduct stock of new items
+        const newSaleItems: BranchSaleItem[] = [];
+        let calculatedTotal = 0;
+
+        for (const itemDto of updateDto.items) {
+          const pId = Number(itemDto.productId);
+          const isManual = pId === 1500027 || itemDto.isManual || (itemDto.sku && String(itemDto.sku).startsWith('MAN-'));
+          const qty = Math.max(1, Math.round(Number(itemDto.quantity) || 1));
+          const unitPrice = Number(itemDto.unitPrice || 0);
+          const subTotal = qty * unitPrice;
+          calculatedTotal += subTotal;
+
+          if (!isManual) {
+            await manager.query(
+              `UPDATE branch_inventories SET currentQuantity = currentQuantity - ? WHERE branchId = ? AND productId = ?`,
+              [qty, branchId, pId],
+            );
+          }
+
+          const saleItem = manager.create(BranchSaleItem, {
+            saleId: sale.id,
+            productId: isManual ? 1500027 : pId,
+            quantity: qty,
+            unitPrice,
+            subTotal,
+          });
+          newSaleItems.push(saleItem);
+        }
+
+        // Delete old items and save new items
+        await manager.delete(BranchSaleItem, { saleId: sale.id });
+        await manager.save(BranchSaleItem, newSaleItems);
+        sale.items = newSaleItems;
+        sale.totalAmount = calculatedTotal;
+      }
+
+      // 2. Discount & Net Amount
+      if (updateDto.discount !== undefined) {
+        sale.discount = Math.max(0, Number(updateDto.discount) || 0);
+      }
+      sale.netAmount = Math.max(0, Number(sale.totalAmount || 0) - Number(sale.discount || 0));
+
+      // 3. Customer
+      if (updateDto.customerName !== undefined) {
+        sale.customerName = updateDto.customerName;
+      }
+      if (updateDto.customerId !== undefined) {
+        sale.customerId = updateDto.customerId ? Number(updateDto.customerId) : undefined;
+      }
+
+      // 4. Payment Method & Amounts
+      if (updateDto.paymentMethod) {
+        sale.paymentMethod = updateDto.paymentMethod;
+      }
+      if (updateDto.saleType) {
+        sale.saleType = updateDto.saleType;
+      }
+
+      if (sale.paymentMethod === 'CREDIT' || sale.paymentMethod === 'آجل') {
+        sale.paidAmount = updateDto.paidAmount !== undefined ? Number(updateDto.paidAmount) : 0;
+        sale.remainingAmount = Math.max(0, sale.netAmount - sale.paidAmount);
+      } else {
+        sale.paidAmount = updateDto.paidAmount !== undefined ? Number(updateDto.paidAmount) : sale.netAmount;
+        sale.remainingAmount = updateDto.remainingAmount !== undefined ? Number(updateDto.remainingAmount) : 0;
+      }
+
+      const savedSale = await manager.save(BranchSale, sale);
+
+      this.cacheService.invalidatePattern(`inventory:${branchId}`);
+      this.cacheService.invalidatePattern(`treasury_report_${branchId}`);
+
+      this.activityService.createAuditLog(
+        username,
+        'تعديل فاتورة مبيعات',
+        `تم تعديل الفاتورة #${sale.invoiceNumber || sale.id} بقيمة صافية ${sale.netAmount} ج.م`,
+      ).catch(() => {});
+
+      return manager.findOne(BranchSale, {
+        where: { id: savedSale.id },
+        relations: { items: { product: true }, branch: true, customer: true },
+      });
+    });
+  }
 }
 

@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Query, Headers, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Param, Body, Query, Headers, UseGuards } from '@nestjs/common';
 import { PosService } from './pos.service';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -32,6 +32,16 @@ export class PosController {
     @GetUser() user: User,
   ) {
     return this.posService.processSaleReturn(returnDto, user.username);
+  }
+
+  @Patch('sales/:id')
+  @UseGuards(BranchScopeGuard)
+  async updateSale(
+    @Param('id') id: string,
+    @Body() updateDto: any,
+    @GetUser() user: User,
+  ) {
+    return this.posService.updateSale(id, updateDto, user.username);
   }
 
   @Post('sync-batch')
