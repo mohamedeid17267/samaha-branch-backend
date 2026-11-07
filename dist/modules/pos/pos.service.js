@@ -89,12 +89,7 @@ let PosService = PosService_1 = class PosService {
                         ? invUpdatesMap.get(invId).newQty
                         : Number(inventory.currentQuantity || 0);
                     if (currentQtyInMap < itemDto.quantity) {
-                        if (effectiveIdempotencyKey) {
-                            this.logger.warn(`[Offline Reconciliation] Stock negative for Product ${pId} (Available: ${currentQtyInMap}, Sold: ${itemDto.quantity})`);
-                        }
-                        else {
-                            throw new common_1.BadRequestException(`Insufficient stock for Product ID ${pId}`);
-                        }
+                        throw new common_1.BadRequestException(`رصيد الصنف [${inventory.product?.name || pId}] غير كافٍ بالمخزن (المتاح: ${currentQtyInMap} قطعة، المطلوب: ${itemDto.quantity} قطعة)`);
                     }
                     const newQty = currentQtyInMap - itemDto.quantity;
                     inventory.currentQuantity = newQty;
@@ -767,6 +762,159 @@ let PosService = PosService_1 = class PosService {
                 refundAmount,
                 originalSaleId: originalSale?.id,
             };
+        });
+    }
+    async updateSale(idOrInvoice, updateDto, username) {
+        return this.dataSource.transaction(async (manager) => {
+            const rawId = String(idOrInvoice || '').trim();
+            const cleanId = rawId.replace(/^#/, '').replace(/^POS\s*#?/i, '').trim();
+            const numId = Number(cleanId);
+            let sale = null;
+            if (!isNaN(numId) && numId > 0) {
+                sale = await manager.findOne(branch_sale_entity_1.BranchSale, {
+                    where: { id: numId },
+                    relations: { items: { product: true }, branch: true, customer: true },
+                });
+            }
+            if (!sale) {
+                sale = await manager.findOne(branch_sale_entity_1.BranchSale, {
+                    where: [
+                        { invoiceNumber: rawId },
+                        { invoiceNumber: cleanId },
+                        { invoiceNumber: `#${cleanId}` },
+                        { invoiceNumber: `POS #${cleanId}` },
+                        { invoiceNumber: `POS#${cleanId}` },
+                        { offlineReferenceId: rawId },
+                        { idempotencyKey: rawId },
+                    ],
+                    relations: { items: { product: true }, branch: true, customer: true },
+                });
+            }
+            if (!sale) {
+                throw new common_1.NotFoundException(`الفاتورة [${idOrInvoice}] غير موجودة`);
+            }
+            const branchId = sale.branchId;
+            if (Array.isArray(updateDto.items) && updateDto.items.length > 0) {
+                for (const oldItem of sale.items || []) {
+                    const pId = Number(oldItem.productId);
+                    const isManual = pId === 1500027 || oldItem.product?.category === 'خدمات' || oldItem.product?.sku === 'MANUAL-POS-ITEM';
+                    if (!isManual) {
+                        await manager.query(`UPDATE branch_inventories SET currentQuantity = currentQuantity + ? WHERE branchId = ? AND productId = ?`, [oldItem.quantity, branchId, pId]);
+                    }
+                }
+                const newSaleItems = [];
+                let calculatedTotal = 0;
+                for (const itemDto of updateDto.items) {
+                    const pId = Number(itemDto.productId);
+                    const isManual = pId === 1500027 || itemDto.isManual || (itemDto.sku && String(itemDto.sku).startsWith('MAN-'));
+                    const qty = Math.max(1, Math.round(Number(itemDto.quantity) || 1));
+                    const unitPrice = Number(itemDto.unitPrice || 0);
+                    const subTotal = qty * unitPrice;
+                    calculatedTotal += subTotal;
+                    if (!isManual) {
+                        await manager.query(`UPDATE branch_inventories SET currentQuantity = currentQuantity - ? WHERE branchId = ? AND productId = ?`, [qty, branchId, pId]);
+                    }
+                    const saleItem = manager.create(branch_sale_item_entity_1.BranchSaleItem, {
+                        saleId: sale.id,
+                        productId: isManual ? 1500027 : pId,
+                        quantity: qty,
+                        unitPrice,
+                        subTotal,
+                    });
+                    newSaleItems.push(saleItem);
+                }
+                await manager.delete(branch_sale_item_entity_1.BranchSaleItem, { saleId: sale.id });
+                await manager.save(branch_sale_item_entity_1.BranchSaleItem, newSaleItems);
+                sale.items = newSaleItems;
+                sale.totalAmount = calculatedTotal;
+            }
+            const previousNetAmount = Number(sale.netAmount || 0);
+            const previousCustomerId = sale.customerId;
+            if (updateDto.discount !== undefined) {
+                sale.discount = Math.max(0, Number(updateDto.discount) || 0);
+            }
+            sale.netAmount = Math.max(0, Number(sale.totalAmount || 0) - Number(sale.discount || 0));
+            const netDelta = sale.netAmount - previousNetAmount;
+            if (updateDto.customerName !== undefined) {
+                sale.customerName = updateDto.customerName;
+            }
+            if (updateDto.customerId !== undefined) {
+                sale.customerId = updateDto.customerId ? Number(updateDto.customerId) : undefined;
+            }
+            if (sale.customerId && Number(sale.customerId) > 0) {
+                const customer = await manager.findOne(customer_entity_1.Customer, { where: { id: sale.customerId } });
+                if (customer) {
+                    if (previousCustomerId === sale.customerId) {
+                        if (netDelta !== 0) {
+                            const existingCharge = await manager.findOne(customer_debt_ledger_entity_1.CustomerDebtLedger, {
+                                where: {
+                                    customerId: customer.id,
+                                    relatedSaleId: sale.id,
+                                    transactionType: transaction_type_enum_1.TransactionType.CHARGE,
+                                },
+                            });
+                            if (existingCharge) {
+                                existingCharge.amount = sale.netAmount;
+                                await manager.save(customer_debt_ledger_entity_1.CustomerDebtLedger, existingCharge);
+                            }
+                            customer.totalInvoiced = Math.max(0, Number(customer.totalInvoiced || 0) + netDelta);
+                            customer.currentDebt = Math.max(0, Number(customer.currentDebt || 0) + netDelta);
+                            await manager.save(customer_entity_1.Customer, customer);
+                        }
+                    }
+                    else {
+                        if (previousCustomerId) {
+                            const prevCust = await manager.findOne(customer_entity_1.Customer, { where: { id: previousCustomerId } });
+                            if (prevCust) {
+                                await manager.delete(customer_debt_ledger_entity_1.CustomerDebtLedger, { relatedSaleId: sale.id });
+                                prevCust.totalInvoiced = Math.max(0, Number(prevCust.totalInvoiced || 0) - previousNetAmount);
+                                prevCust.currentDebt = Math.max(0, Number(prevCust.currentDebt || 0) - previousNetAmount);
+                                await manager.save(customer_entity_1.Customer, prevCust);
+                            }
+                        }
+                        const newCharge = manager.create(customer_debt_ledger_entity_1.CustomerDebtLedger, {
+                            customerId: customer.id,
+                            branchId,
+                            transactionType: transaction_type_enum_1.TransactionType.CHARGE,
+                            invoiceNumber: sale.invoiceNumber || String(sale.id),
+                            relatedSaleId: sale.id,
+                            amount: sale.netAmount,
+                            paidAmount: 0,
+                            balanceAfter: Number(customer.currentDebt || 0) + sale.netAmount,
+                            description: `فاتورة مبيعات معدلة POS #${sale.invoiceNumber || sale.id}`,
+                            invoiceDate: new Date().toISOString().split('T')[0],
+                            paymentMethod: sale.paymentMethod,
+                            recordedBy: username,
+                        });
+                        await manager.save(customer_debt_ledger_entity_1.CustomerDebtLedger, newCharge);
+                        customer.totalInvoiced = Number(customer.totalInvoiced || 0) + sale.netAmount;
+                        customer.currentDebt = Number(customer.currentDebt || 0) + sale.netAmount;
+                        await manager.save(customer_entity_1.Customer, customer);
+                    }
+                }
+            }
+            if (updateDto.paymentMethod) {
+                sale.paymentMethod = updateDto.paymentMethod;
+            }
+            if (updateDto.saleType) {
+                sale.saleType = updateDto.saleType;
+            }
+            if (sale.paymentMethod === 'CREDIT' || sale.paymentMethod === 'آجل') {
+                sale.paidAmount = updateDto.paidAmount !== undefined ? Number(updateDto.paidAmount) : 0;
+                sale.remainingAmount = Math.max(0, sale.netAmount - sale.paidAmount);
+            }
+            else {
+                sale.paidAmount = updateDto.paidAmount !== undefined ? Number(updateDto.paidAmount) : sale.netAmount;
+                sale.remainingAmount = updateDto.remainingAmount !== undefined ? Number(updateDto.remainingAmount) : 0;
+            }
+            const savedSale = await manager.save(branch_sale_entity_1.BranchSale, sale);
+            this.cacheService.invalidatePattern(`inventory:${branchId}`);
+            this.cacheService.invalidatePattern(`treasury_report_${branchId}`);
+            this.activityService.createAuditLog(username, 'تعديل فاتورة مبيعات', `تم تعديل الفاتورة #${sale.invoiceNumber || sale.id} بقيمة صافية ${sale.netAmount} ج.م`).catch(() => { });
+            return manager.findOne(branch_sale_entity_1.BranchSale, {
+                where: { id: savedSale.id },
+                relations: { items: { product: true }, branch: true, customer: true },
+            });
         });
     }
 };

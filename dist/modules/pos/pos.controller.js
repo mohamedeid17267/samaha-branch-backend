@@ -35,6 +35,9 @@ let PosController = class PosController {
     async returnSale(returnDto, user) {
         return this.posService.processSaleReturn(returnDto, user.username);
     }
+    async updateSale(id, updateDto, user) {
+        return this.posService.updateSale(id, updateDto, user.username);
+    }
     async syncBatch(batchData, user) {
         return this.posService.syncBatch(batchData, user?.username || 'SyncAgent');
     }
@@ -66,6 +69,16 @@ __decorate([
     __metadata("design:paramtypes", [Object, user_entity_1.User]),
     __metadata("design:returntype", Promise)
 ], PosController.prototype, "returnSale", null);
+__decorate([
+    (0, common_1.Patch)('sales/:id'),
+    (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, get_user_decorator_1.GetUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, user_entity_1.User]),
+    __metadata("design:returntype", Promise)
+], PosController.prototype, "updateSale", null);
 __decorate([
     (0, common_1.Post)('sync-batch'),
     __param(0, (0, common_1.Body)()),

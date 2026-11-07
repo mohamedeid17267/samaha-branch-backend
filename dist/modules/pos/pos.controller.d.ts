@@ -11,6 +11,7 @@ export declare class PosController {
         refundAmount: any;
         originalSaleId: number | undefined;
     }>;
+    updateSale(id: string, updateDto: any, user: User): Promise<import("../../database/entities/branch-sale.entity").BranchSale | null>;
     syncBatch(batchData: any, user: User): Promise<{
         success: boolean;
         processedCount: number;

@@ -967,19 +967,27 @@ export class PosService {
 
   async updateSale(idOrInvoice: string | number, updateDto: any, username: string) {
     return this.dataSource.transaction(async (manager) => {
+      const rawId = String(idOrInvoice || '').trim();
+      const cleanId = rawId.replace(/^#/, '').replace(/^POS\s*#?/i, '').trim();
+      const numId = Number(cleanId);
+
       let sale: BranchSale | null = null;
-      if (!isNaN(Number(idOrInvoice)) && Number(idOrInvoice) > 0) {
+      if (!isNaN(numId) && numId > 0) {
         sale = await manager.findOne(BranchSale, {
-          where: { id: Number(idOrInvoice) },
+          where: { id: numId },
           relations: { items: { product: true }, branch: true, customer: true },
         });
       }
       if (!sale) {
         sale = await manager.findOne(BranchSale, {
           where: [
-            { invoiceNumber: String(idOrInvoice) },
-            { offlineReferenceId: String(idOrInvoice) },
-            { idempotencyKey: String(idOrInvoice) },
+            { invoiceNumber: rawId },
+            { invoiceNumber: cleanId },
+            { invoiceNumber: `#${cleanId}` },
+            { invoiceNumber: `POS #${cleanId}` },
+            { invoiceNumber: `POS#${cleanId}` },
+            { offlineReferenceId: rawId },
+            { idempotencyKey: rawId },
           ],
           relations: { items: { product: true }, branch: true, customer: true },
         });

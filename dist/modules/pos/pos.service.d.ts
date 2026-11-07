@@ -94,4 +94,5 @@ export declare class PosService {
         refundAmount: any;
         originalSaleId: number | undefined;
     }>;
+    updateSale(idOrInvoice: string | number, updateDto: any, username: string): Promise<BranchSale | null>;
 }
