@@ -114,15 +114,9 @@ export class PosService {
             : Number(inventory.currentQuantity || 0);
 
           if (currentQtyInMap < itemDto.quantity) {
-            if (effectiveIdempotencyKey) {
-              this.logger.warn(
-                `[Offline Reconciliation] Stock negative for Product ${pId} (Available: ${currentQtyInMap}, Sold: ${itemDto.quantity})`,
-              );
-            } else {
-              throw new BadRequestException(
-                `Insufficient stock for Product ID ${pId}`,
-              );
-            }
+            throw new BadRequestException(
+              `رصيد الصنف [${inventory.product?.name || pId}] غير كافٍ بالمخزن (المتاح: ${currentQtyInMap} قطعة، المطلوب: ${itemDto.quantity} قطعة)`,
+            );
           }
 
           const newQty = currentQtyInMap - itemDto.quantity;
