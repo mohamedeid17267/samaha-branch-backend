@@ -49,6 +49,9 @@ export declare class CustomersController {
             totalInvoiced: number;
             totalPaid: number;
             currentDebt: number;
+            rawTotalInvoiced?: number;
+            rawTotalPaid?: number;
+            returnedInvoicedSum?: number;
         };
     }>;
     getStatement(id: number, page?: number, limit?: number): Promise<{
@@ -64,6 +67,9 @@ export declare class CustomersController {
             totalInvoiced: number;
             totalPaid: number;
             currentDebt: number;
+            rawTotalInvoiced?: number;
+            rawTotalPaid?: number;
+            returnedInvoicedSum?: number;
         };
     }>;
 }

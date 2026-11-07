@@ -374,6 +374,9 @@ export class CustomersService implements OnApplicationBootstrap {
       totalInvoiced: number;
       totalPaid: number;
       currentDebt: number;
+      rawTotalInvoiced?: number;
+      rawTotalPaid?: number;
+      returnedInvoicedSum?: number;
     };
   }> {
     const customer = await this.findOne(id);
@@ -389,6 +392,54 @@ export class CustomersService implements OnApplicationBootstrap {
       take: limit,
     });
 
+    // Automatically exclude fully returned sales from effective invoiced & paid totals
+    let fullyReturnedTotal = 0;
+    const invoiceGroups: Record<string, { charged: number; returned: number; status?: string }> = {};
+
+    for (const entry of history) {
+      let key = entry.relatedSaleId ? `sale_${entry.relatedSaleId}` : null;
+      if (!key && entry.invoiceNumber) {
+        const clean = String(entry.invoiceNumber).replace(/^RET-/i, '').replace(/^#/, '').replace(/^POS\s*#?/i, '').trim();
+        if (clean) key = `inv_${clean}`;
+      }
+      if (!key && entry.description) {
+        const match = String(entry.description).match(/#([A-Za-z0-9_-]+)/);
+        if (match && match[1]) {
+          const clean = match[1].replace(/^RET-/i, '').replace(/^POS\s*#?/i, '').trim();
+          if (clean) key = `inv_${clean}`;
+        }
+      }
+      if (!key) continue;
+
+      if (!invoiceGroups[key]) {
+        invoiceGroups[key] = { charged: 0, returned: 0, status: entry.relatedSale?.status };
+      }
+      const amt = Number(entry.amount) || 0;
+      const isReturn =
+        (entry.invoiceNumber && String(entry.invoiceNumber).startsWith('RET-')) ||
+        (entry.description && String(entry.description).includes('مرتجع'));
+
+      if (entry.transactionType === TransactionType.CHARGE) {
+        invoiceGroups[key].charged += amt;
+      } else if (isReturn) {
+        invoiceGroups[key].returned += amt;
+      }
+    }
+
+    for (const data of Object.values(invoiceGroups)) {
+      if (
+        data.status === 'RETURNED' ||
+        (data.returned > 0 && data.charged > 0 && data.returned >= data.charged - 0.5)
+      ) {
+        fullyReturnedTotal += data.charged;
+      }
+    }
+
+    const rawInvoiced = Number(customer.totalInvoiced) || 0;
+    const rawPaid = Number(customer.totalPaid) || 0;
+    const cleanInvoiced = Math.max(0, rawInvoiced - fullyReturnedTotal);
+    const cleanPaid = Math.max(0, rawPaid - fullyReturnedTotal);
+
     return {
       customer,
       history,
@@ -399,9 +450,12 @@ export class CustomersService implements OnApplicationBootstrap {
         totalPages: Math.ceil(total / limit) || 1,
       },
       summary: {
-        totalInvoiced: Number(customer.totalInvoiced) || 0,
-        totalPaid: Number(customer.totalPaid) || 0,
+        totalInvoiced: cleanInvoiced,
+        totalPaid: cleanPaid,
         currentDebt: Number(customer.currentDebt) || 0,
+        rawTotalInvoiced: rawInvoiced,
+        rawTotalPaid: rawPaid,
+        returnedInvoicedSum: fullyReturnedTotal,
       },
     };
   }

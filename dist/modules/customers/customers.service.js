@@ -295,6 +295,48 @@ let CustomersService = class CustomersService {
             skip: (page - 1) * limit,
             take: limit,
         });
+        let fullyReturnedTotal = 0;
+        const invoiceGroups = {};
+        for (const entry of history) {
+            let key = entry.relatedSaleId ? `sale_${entry.relatedSaleId}` : null;
+            if (!key && entry.invoiceNumber) {
+                const clean = String(entry.invoiceNumber).replace(/^RET-/i, '').replace(/^#/, '').replace(/^POS\s*#?/i, '').trim();
+                if (clean)
+                    key = `inv_${clean}`;
+            }
+            if (!key && entry.description) {
+                const match = String(entry.description).match(/#([A-Za-z0-9_-]+)/);
+                if (match && match[1]) {
+                    const clean = match[1].replace(/^RET-/i, '').replace(/^POS\s*#?/i, '').trim();
+                    if (clean)
+                        key = `inv_${clean}`;
+                }
+            }
+            if (!key)
+                continue;
+            if (!invoiceGroups[key]) {
+                invoiceGroups[key] = { charged: 0, returned: 0, status: entry.relatedSale?.status };
+            }
+            const amt = Number(entry.amount) || 0;
+            const isReturn = (entry.invoiceNumber && String(entry.invoiceNumber).startsWith('RET-')) ||
+                (entry.description && String(entry.description).includes('مرتجع'));
+            if (entry.transactionType === transaction_type_enum_1.TransactionType.CHARGE) {
+                invoiceGroups[key].charged += amt;
+            }
+            else if (isReturn) {
+                invoiceGroups[key].returned += amt;
+            }
+        }
+        for (const data of Object.values(invoiceGroups)) {
+            if (data.status === 'RETURNED' ||
+                (data.returned > 0 && data.charged > 0 && data.returned >= data.charged - 0.5)) {
+                fullyReturnedTotal += data.charged;
+            }
+        }
+        const rawInvoiced = Number(customer.totalInvoiced) || 0;
+        const rawPaid = Number(customer.totalPaid) || 0;
+        const cleanInvoiced = Math.max(0, rawInvoiced - fullyReturnedTotal);
+        const cleanPaid = Math.max(0, rawPaid - fullyReturnedTotal);
         return {
             customer,
             history,
@@ -305,9 +347,12 @@ let CustomersService = class CustomersService {
                 totalPages: Math.ceil(total / limit) || 1,
             },
             summary: {
-                totalInvoiced: Number(customer.totalInvoiced) || 0,
-                totalPaid: Number(customer.totalPaid) || 0,
+                totalInvoiced: cleanInvoiced,
+                totalPaid: cleanPaid,
                 currentDebt: Number(customer.currentDebt) || 0,
+                rawTotalInvoiced: rawInvoiced,
+                rawTotalPaid: rawPaid,
+                returnedInvoicedSum: fullyReturnedTotal,
             },
         };
     }

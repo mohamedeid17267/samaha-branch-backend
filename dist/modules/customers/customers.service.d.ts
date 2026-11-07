@@ -59,6 +59,9 @@ export declare class CustomersService implements OnApplicationBootstrap {
             totalInvoiced: number;
             totalPaid: number;
             currentDebt: number;
+            rawTotalInvoiced?: number;
+            rawTotalPaid?: number;
+            returnedInvoicedSum?: number;
         };
     }>;
     getLedger(id: number, page?: number, limit?: number): Promise<any>;
