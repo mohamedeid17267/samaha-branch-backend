@@ -40,6 +40,12 @@ let CustomersController = class CustomersController {
     update(id, updateCustomerDto) {
         return this.customersService.update(id, updateCustomerDto);
     }
+    deleteTransactionById(transactionId, user) {
+        return this.customersService.deleteTransactionById(transactionId, user?.username);
+    }
+    deleteTransaction(customerId, transactionId, user) {
+        return this.customersService.deleteTransaction(customerId, transactionId, user?.username);
+    }
     remove(id) {
         return this.customersService.remove(id);
     }
@@ -90,6 +96,23 @@ __decorate([
     __metadata("design:paramtypes", [Number, update_customer_dto_1.UpdateCustomerDto]),
     __metadata("design:returntype", void 0)
 ], CustomersController.prototype, "update", null);
+__decorate([
+    (0, common_1.Delete)('transactions/:transactionId'),
+    __param(0, (0, common_1.Param)('transactionId', common_1.ParseIntPipe)),
+    __param(1, (0, get_user_decorator_1.GetUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, user_entity_1.User]),
+    __metadata("design:returntype", void 0)
+], CustomersController.prototype, "deleteTransactionById", null);
+__decorate([
+    (0, common_1.Delete)(':id/transactions/:transactionId'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Param)('transactionId', common_1.ParseIntPipe)),
+    __param(2, (0, get_user_decorator_1.GetUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Number, user_entity_1.User]),
+    __metadata("design:returntype", void 0)
+], CustomersController.prototype, "deleteTransaction", null);
 __decorate([
     (0, common_1.Delete)(':id'),
     __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),

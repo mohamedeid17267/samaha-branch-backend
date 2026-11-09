@@ -359,6 +359,60 @@ let CustomersService = class CustomersService {
     async getLedger(id, page = 1, limit = 100) {
         return this.getStatement(id, page, limit);
     }
+    async deleteTransaction(customerId, transactionId, username = 'النظام') {
+        const customer = await this.findOne(customerId);
+        const transaction = await this.ledgerRepository.findOne({
+            where: { id: transactionId, customerId: customer.id },
+            relations: { relatedSale: true },
+        });
+        if (!transaction) {
+            throw new common_1.NotFoundException(`الحركة برقم ${transactionId} غير موجودة في كشف حساب هذا العميل`);
+        }
+        const txTypeStr = transaction.transactionType === transaction_type_enum_1.TransactionType.CHARGE
+            ? 'فاتورة/مديونية'
+            : 'سداد/دفعة';
+        const txAmount = transaction.amount;
+        const txDesc = transaction.description || '';
+        await this.ledgerRepository.remove(transaction);
+        const allRecords = await this.ledgerRepository.find({
+            where: { customerId: customer.id },
+            order: { id: 'ASC' },
+        });
+        let currentBalance = 0;
+        let totalInvoiced = 0;
+        let totalPaid = 0;
+        for (const record of allRecords) {
+            if (record.transactionType === transaction_type_enum_1.TransactionType.CHARGE) {
+                currentBalance += Number(record.amount) || 0;
+                totalInvoiced += Number(record.amount) || 0;
+            }
+            else if (record.transactionType === transaction_type_enum_1.TransactionType.PAYMENT) {
+                currentBalance -= Number(record.amount) || 0;
+                totalPaid += Number(record.amount) || 0;
+            }
+            record.balanceAfter = currentBalance;
+            await this.ledgerRepository.save(record);
+        }
+        customer.currentDebt = currentBalance;
+        customer.totalInvoiced = totalInvoiced;
+        customer.totalPaid = totalPaid;
+        const savedCustomer = await this.customerRepository.save(customer);
+        await this.activityService.createAuditLog(username, 'حذف حركة من كشف حساب العميل', `تم حذف حركة (${txTypeStr}) بقيمة ${txAmount} ج.م للعميل ${customer.name}. الرصيد الجديد: ${customer.currentDebt} ج.م (${txDesc})`);
+        return {
+            success: true,
+            message: 'تم حذف الحركة وإعادة احتساب رصيد العميل بنجاح',
+            customer: savedCustomer,
+        };
+    }
+    async deleteTransactionById(transactionId, username = 'النظام') {
+        const transaction = await this.ledgerRepository.findOne({
+            where: { id: transactionId },
+        });
+        if (!transaction) {
+            throw new common_1.NotFoundException(`الحركة برقم ${transactionId} غير موجودة`);
+        }
+        return this.deleteTransaction(transaction.customerId, transactionId, username);
+    }
 };
 exports.CustomersService = CustomersService;
 __decorate([

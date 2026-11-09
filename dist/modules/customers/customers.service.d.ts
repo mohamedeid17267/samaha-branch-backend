@@ -65,4 +65,14 @@ export declare class CustomersService implements OnApplicationBootstrap {
         };
     }>;
     getLedger(id: number, page?: number, limit?: number): Promise<any>;
+    deleteTransaction(customerId: number, transactionId: number, username?: string): Promise<{
+        success: boolean;
+        message: string;
+        customer: Customer;
+    }>;
+    deleteTransactionById(transactionId: number, username?: string): Promise<{
+        success: boolean;
+        message: string;
+        customer: Customer;
+    }>;
 }

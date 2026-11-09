@@ -25,6 +25,16 @@ export declare class CustomersController {
     }>;
     findOne(id: number): Promise<import("../../database/entities/customer.entity").Customer>;
     update(id: number, updateCustomerDto: UpdateCustomerDto): Promise<import("../../database/entities/customer.entity").Customer>;
+    deleteTransactionById(transactionId: number, user: User): Promise<{
+        success: boolean;
+        message: string;
+        customer: import("../../database/entities/customer.entity").Customer;
+    }>;
+    deleteTransaction(customerId: number, transactionId: number, user: User): Promise<{
+        success: boolean;
+        message: string;
+        customer: import("../../database/entities/customer.entity").Customer;
+    }>;
     remove(id: number): Promise<{
         success: boolean;
         message: string;

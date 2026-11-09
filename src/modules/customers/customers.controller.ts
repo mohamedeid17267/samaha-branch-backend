@@ -58,6 +58,30 @@ export class CustomersController {
     return this.customersService.update(id, updateCustomerDto);
   }
 
+  @Delete('transactions/:transactionId')
+  deleteTransactionById(
+    @Param('transactionId', ParseIntPipe) transactionId: number,
+    @GetUser() user: User,
+  ) {
+    return this.customersService.deleteTransactionById(
+      transactionId,
+      user?.username,
+    );
+  }
+
+  @Delete(':id/transactions/:transactionId')
+  deleteTransaction(
+    @Param('id', ParseIntPipe) customerId: number,
+    @Param('transactionId', ParseIntPipe) transactionId: number,
+    @GetUser() user: User,
+  ) {
+    return this.customersService.deleteTransaction(
+      customerId,
+      transactionId,
+      user?.username,
+    );
+  }
+
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.customersService.remove(id);

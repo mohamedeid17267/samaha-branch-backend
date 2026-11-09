@@ -467,4 +467,88 @@ export class CustomersService implements OnApplicationBootstrap {
   ): Promise<any> {
     return this.getStatement(id, page, limit);
   }
+
+  async deleteTransaction(
+    customerId: number,
+    transactionId: number,
+    username = 'النظام',
+  ): Promise<{ success: boolean; message: string; customer: Customer }> {
+    const customer = await this.findOne(customerId);
+
+    const transaction = await this.ledgerRepository.findOne({
+      where: { id: transactionId, customerId: customer.id },
+      relations: { relatedSale: true },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException(
+        `الحركة برقم ${transactionId} غير موجودة في كشف حساب هذا العميل`,
+      );
+    }
+
+    const txTypeStr =
+      transaction.transactionType === TransactionType.CHARGE
+        ? 'فاتورة/مديونية'
+        : 'سداد/دفعة';
+    const txAmount = transaction.amount;
+    const txDesc = transaction.description || '';
+
+    // Remove the ledger entry
+    await this.ledgerRepository.remove(transaction);
+
+    // Recalculate customer ledger running balances and totals in chronological order
+    const allRecords = await this.ledgerRepository.find({
+      where: { customerId: customer.id },
+      order: { id: 'ASC' },
+    });
+
+    let currentBalance = 0;
+    let totalInvoiced = 0;
+    let totalPaid = 0;
+
+    for (const record of allRecords) {
+      if (record.transactionType === TransactionType.CHARGE) {
+        currentBalance += Number(record.amount) || 0;
+        totalInvoiced += Number(record.amount) || 0;
+      } else if (record.transactionType === TransactionType.PAYMENT) {
+        currentBalance -= Number(record.amount) || 0;
+        totalPaid += Number(record.amount) || 0;
+      }
+      record.balanceAfter = currentBalance;
+      await this.ledgerRepository.save(record);
+    }
+
+    customer.currentDebt = currentBalance;
+    customer.totalInvoiced = totalInvoiced;
+    customer.totalPaid = totalPaid;
+    const savedCustomer = await this.customerRepository.save(customer);
+
+    // Audit log
+    await this.activityService.createAuditLog(
+      username,
+      'حذف حركة من كشف حساب العميل',
+      `تم حذف حركة (${txTypeStr}) بقيمة ${txAmount} ج.م للعميل ${customer.name}. الرصيد الجديد: ${customer.currentDebt} ج.م (${txDesc})`,
+    );
+
+    return {
+      success: true,
+      message: 'تم حذف الحركة وإعادة احتساب رصيد العميل بنجاح',
+      customer: savedCustomer,
+    };
+  }
+
+  async deleteTransactionById(
+    transactionId: number,
+    username = 'النظام',
+  ): Promise<{ success: boolean; message: string; customer: Customer }> {
+    const transaction = await this.ledgerRepository.findOne({
+      where: { id: transactionId },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException(`الحركة برقم ${transactionId} غير موجودة`);
+    }
+
+    return this.deleteTransaction(transaction.customerId, transactionId, username);
+  }
 }
