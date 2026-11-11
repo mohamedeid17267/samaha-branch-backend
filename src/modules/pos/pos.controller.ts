@@ -76,11 +76,15 @@ export class PosController {
     @Query('branchId') branchId?: number,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('startDay') startDay?: string,
+    @Query('endDay') endDay?: string,
   ) {
     return this.posService.getTreasuryReport(
       branchId ? Number(branchId) : 1,
       startDate,
       endDate,
+      startDay,
+      endDay,
     );
   }
 }

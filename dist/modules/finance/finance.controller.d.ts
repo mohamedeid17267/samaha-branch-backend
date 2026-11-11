@@ -55,4 +55,8 @@ export declare class FinanceController {
     getAllBranchDailyRevenues(): Promise<import("../../database/entities/branch-daily-revenue.entity").BranchDailyRevenue[]>;
     getBranchDailyRevenues(branchId: number): Promise<import("../../database/entities/branch-daily-revenue.entity").BranchDailyRevenue[]>;
     addBranchDailyRevenue(branchId: number, data: any): Promise<import("../../database/entities/branch-daily-revenue.entity").BranchDailyRevenue[]>;
+    deleteBranchDailyRevenue(branchId: number, id: number): Promise<{
+        success: boolean;
+        message: string;
+    }>;
 }

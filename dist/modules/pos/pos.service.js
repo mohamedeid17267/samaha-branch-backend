@@ -25,6 +25,7 @@ const customer_entity_1 = require("../../database/entities/customer.entity");
 const customer_debt_ledger_entity_1 = require("../../database/entities/customer-debt-ledger.entity");
 const branch_expense_entity_1 = require("../../database/entities/branch-expense.entity");
 const supplier_debt_ledger_entity_1 = require("../../database/entities/supplier-debt-ledger.entity");
+const branch_daily_revenue_entity_1 = require("../../database/entities/branch-daily-revenue.entity");
 const transaction_type_enum_1 = require("../../common/enums/transaction-type.enum");
 const activity_service_1 = require("../activity/activity.service");
 const cache_service_1 = require("../../common/services/cache.service");
@@ -414,6 +415,21 @@ let PosService = PosService_1 = class PosService {
             if (s.items && Array.isArray(s.items)) {
                 for (const item of s.items) {
                     totalItemsCount += Number(item.quantity) || 0;
+                    const isManual = Number(item.productId) === 1500027 ||
+                        Number(item.productId) <= 0 ||
+                        (item.product?.sku && String(item.product.sku).startsWith('MAN-')) ||
+                        item.product?.sku === 'MANUAL-POS-ITEM' ||
+                        item.product?.category === 'صنف يدوي' ||
+                        item.product?.category === 'خدمات' ||
+                        (item.product?.name && String(item.product.name).includes('صنف يدوي'));
+                    if (isManual) {
+                        const uPrice = Number(item.unitPrice || 0);
+                        const manualCost = Math.round(uPrice * 0.8 * 100) / 100;
+                        item.costPrice = manualCost;
+                        if (item.product) {
+                            item.product.costPrice = manualCost;
+                        }
+                    }
                 }
             }
         }
@@ -438,7 +454,7 @@ let PosService = PosService_1 = class PosService {
             },
         };
     }
-    async getTreasuryReport(branchId, startDate, endDate) {
+    async getTreasuryReport(branchId, startDate, endDate, startDay, endDay) {
         const qb = this.saleRepository
             .createQueryBuilder('sale')
             .leftJoinAndSelect('sale.items', 'items')
@@ -572,6 +588,30 @@ let PosService = PosService_1 = class PosService {
         }
         supplierPayQb.orderBy('ledger.createdAt', 'DESC');
         const supplierPayments = await supplierPayQb.getMany().catch(() => []);
+        const subTreasuryQb = this.dataSource
+            .getRepository(branch_daily_revenue_entity_1.BranchDailyRevenue)
+            .createQueryBuilder('rev')
+            .where('rev.branchId = :branchId', { branchId });
+        const effectiveStartDay = startDay ||
+            (startDate
+                ? new Date(new Date(startDate).getTime() + 2 * 3600 * 1000).toISOString().split('T')[0]
+                : undefined);
+        const effectiveEndDay = endDay ||
+            (endDate
+                ? new Date(new Date(endDate).getTime() + 2 * 3600 * 1000).toISOString().split('T')[0]
+                : undefined);
+        if (effectiveStartDay) {
+            subTreasuryQb.andWhere('rev.revenueDate >= :startDay', { startDay: effectiveStartDay });
+        }
+        if (effectiveEndDay) {
+            subTreasuryQb.andWhere('rev.revenueDate <= :endDay', { endDay: effectiveEndDay });
+        }
+        subTreasuryQb.orderBy('rev.revenueDate', 'DESC').addOrderBy('rev.createdAt', 'DESC');
+        const subTreasuryRevenues = await subTreasuryQb.getMany().catch(() => []);
+        let totalSubTreasury = 0;
+        for (const rev of subTreasuryRevenues) {
+            totalSubTreasury += Number(rev.totalAmount || 0);
+        }
         let totalExpenses = 0;
         for (const exp of expenses) {
             totalExpenses += Number(exp.amount || 0);
@@ -583,10 +623,15 @@ let PosService = PosService_1 = class PosService {
         const totalOutflows = totalExpenses + totalSupplierPayments;
         const totalCollected = cash + instapay + wallet + card;
         const netTreasuryCash = cash - totalOutflows;
-        const netTreasuryTotal = totalCollected - totalOutflows;
+        const totalDrawerCash = cash + totalSubTreasury;
+        const netDrawerCash = totalDrawerCash - totalOutflows;
+        const netTreasuryTotal = totalCollected + totalSubTreasury - totalOutflows;
         return {
             totals: {
                 cash,
+                subTreasuryCash: totalSubTreasury,
+                totalDrawerCash,
+                netDrawerCash,
                 instapay,
                 wallet,
                 card,
@@ -599,11 +644,13 @@ let PosService = PosService_1 = class PosService {
                 netTreasuryCash,
                 netTreasuryTotal,
                 invoicesCount: sales.length,
+                subTreasuryCount: subTreasuryRevenues.length,
                 expensesCount: expenses.length,
                 supplierPaymentsCount: supplierPayments.length,
             },
             counts: {
                 cash: cashCount,
+                subTreasury: subTreasuryRevenues.length,
                 instapay: instapayCount,
                 wallet: walletCount,
                 card: cardCount,
@@ -613,6 +660,7 @@ let PosService = PosService_1 = class PosService {
             },
             sales,
             debtPayments: externalDebtPayments,
+            subTreasuryRevenues,
             expenses,
             supplierPayments,
         };

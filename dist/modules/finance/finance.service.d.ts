@@ -73,4 +73,8 @@ export declare class FinanceService implements OnApplicationBootstrap {
     getBranchExpenses(branchId?: number): Promise<BranchExpense[]>;
     addBranchDailyRevenue(branchId: number, data: any): Promise<BranchDailyRevenue[]>;
     getBranchDailyRevenues(branchId?: number): Promise<BranchDailyRevenue[]>;
+    deleteBranchDailyRevenue(id: number, branchId?: number): Promise<{
+        success: boolean;
+        message: string;
+    }>;
 }

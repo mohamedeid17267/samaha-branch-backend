@@ -3,6 +3,7 @@ import { BranchSale } from '../../database/entities/branch-sale.entity';
 import { CustomerDebtLedger } from '../../database/entities/customer-debt-ledger.entity';
 import { BranchExpense } from '../../database/entities/branch-expense.entity';
 import { SupplierDebtLedger } from '../../database/entities/supplier-debt-ledger.entity';
+import { BranchDailyRevenue } from '../../database/entities/branch-daily-revenue.entity';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { ActivityService } from '../activity/activity.service';
 import { MemoryCacheService } from '../../common/services/cache.service';
@@ -33,9 +34,12 @@ export declare class PosService {
             creditTotal: number;
         };
     }>;
-    getTreasuryReport(branchId: number, startDate?: string, endDate?: string): Promise<{
+    getTreasuryReport(branchId: number, startDate?: string, endDate?: string, startDay?: string, endDay?: string): Promise<{
         totals: {
             cash: number;
+            subTreasuryCash: number;
+            totalDrawerCash: number;
+            netDrawerCash: number;
             instapay: number;
             wallet: number;
             card: number;
@@ -48,11 +52,13 @@ export declare class PosService {
             netTreasuryCash: number;
             netTreasuryTotal: number;
             invoicesCount: number;
+            subTreasuryCount: number;
             expensesCount: number;
             supplierPaymentsCount: number;
         };
         counts: {
             cash: number;
+            subTreasury: number;
             instapay: number;
             wallet: number;
             card: number;
@@ -62,6 +68,7 @@ export declare class PosService {
         };
         sales: BranchSale[];
         debtPayments: CustomerDebtLedger[];
+        subTreasuryRevenues: BranchDailyRevenue[] | never[];
         expenses: BranchExpense[] | never[];
         supplierPayments: never[] | SupplierDebtLedger[];
     }>;

@@ -88,6 +88,9 @@ let FinanceController = class FinanceController {
     async addBranchDailyRevenue(branchId, data) {
         return this.financeService.addBranchDailyRevenue(branchId, data);
     }
+    async deleteBranchDailyRevenue(branchId, id) {
+        return this.financeService.deleteBranchDailyRevenue(id, branchId);
+    }
 };
 exports.FinanceController = FinanceController;
 __decorate([
@@ -254,6 +257,15 @@ __decorate([
     __metadata("design:paramtypes", [Number, Object]),
     __metadata("design:returntype", Promise)
 ], FinanceController.prototype, "addBranchDailyRevenue", null);
+__decorate([
+    (0, common_1.Delete)('branch-revenues/:branchId/:id'),
+    (0, common_1.UseGuards)(branch_scope_guard_1.BranchScopeGuard),
+    __param(0, (0, common_1.Param)('branchId', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Number]),
+    __metadata("design:returntype", Promise)
+], FinanceController.prototype, "deleteBranchDailyRevenue", null);
 exports.FinanceController = FinanceController = __decorate([
     (0, common_1.Controller)('finance'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),

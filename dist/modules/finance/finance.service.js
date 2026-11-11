@@ -634,6 +634,7 @@ let FinanceService = FinanceService_1 = class FinanceService {
         });
         const saved = await this.branchDailyRevenueRepository.save(revenue);
         this.cacheService.invalidatePattern('finance:summary');
+        this.cacheService.invalidatePattern(`treasury_report_${branchId}`);
         return saved;
     }
     async getBranchDailyRevenues(branchId) {
@@ -648,6 +649,19 @@ let FinanceService = FinanceService_1 = class FinanceService {
             order: { revenueDate: 'DESC' },
             relations: { branch: true },
         });
+    }
+    async deleteBranchDailyRevenue(id, branchId) {
+        const where = { id };
+        if (branchId)
+            where.branchId = branchId;
+        const rev = await this.branchDailyRevenueRepository.findOne({ where });
+        if (!rev) {
+            throw new common_1.NotFoundException(`Daily revenue ID ${id} not found`);
+        }
+        await this.branchDailyRevenueRepository.delete(id);
+        this.cacheService.invalidatePattern('finance:summary');
+        this.cacheService.invalidatePattern(`treasury_report_${rev.branchId}`);
+        return { success: true, message: 'تم حذف إيراد الخزينة الفرعية بنجاح' };
     }
 };
 exports.FinanceService = FinanceService;

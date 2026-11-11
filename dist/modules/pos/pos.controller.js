@@ -44,8 +44,8 @@ let PosController = class PosController {
     async getSales(branchId, page, limit, startDate, endDate) {
         return this.posService.getSales(branchId ? Number(branchId) : undefined, page ? Number(page) : 1, limit ? Number(limit) : 200, startDate, endDate);
     }
-    async getTreasuryReport(branchId, startDate, endDate) {
-        return this.posService.getTreasuryReport(branchId ? Number(branchId) : 1, startDate, endDate);
+    async getTreasuryReport(branchId, startDate, endDate, startDay, endDay) {
+        return this.posService.getTreasuryReport(branchId ? Number(branchId) : 1, startDate, endDate, startDay, endDay);
     }
 };
 exports.PosController = PosController;
@@ -105,8 +105,10 @@ __decorate([
     __param(0, (0, common_1.Query)('branchId')),
     __param(1, (0, common_1.Query)('startDate')),
     __param(2, (0, common_1.Query)('endDate')),
+    __param(3, (0, common_1.Query)('startDay')),
+    __param(4, (0, common_1.Query)('endDay')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, String, String]),
+    __metadata("design:paramtypes", [Number, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], PosController.prototype, "getTreasuryReport", null);
 exports.PosController = PosController = __decorate([

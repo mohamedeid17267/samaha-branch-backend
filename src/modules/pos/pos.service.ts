@@ -15,6 +15,7 @@ import { Customer } from '../../database/entities/customer.entity';
 import { CustomerDebtLedger } from '../../database/entities/customer-debt-ledger.entity';
 import { BranchExpense } from '../../database/entities/branch-expense.entity';
 import { SupplierDebtLedger } from '../../database/entities/supplier-debt-ledger.entity';
+import { BranchDailyRevenue } from '../../database/entities/branch-daily-revenue.entity';
 import { TransactionType } from '../../common/enums/transaction-type.enum';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { ActivityService } from '../activity/activity.service';
@@ -541,6 +542,22 @@ export class PosService {
       if (s.items && Array.isArray(s.items)) {
         for (const item of s.items) {
           totalItemsCount += Number(item.quantity) || 0;
+          const isManual =
+            Number(item.productId) === 1500027 ||
+            Number(item.productId) <= 0 ||
+            (item.product?.sku && String(item.product.sku).startsWith('MAN-')) ||
+            item.product?.sku === 'MANUAL-POS-ITEM' ||
+            item.product?.category === 'صنف يدوي' ||
+            item.product?.category === 'خدمات' ||
+            (item.product?.name && String(item.product.name).includes('صنف يدوي'));
+          if (isManual) {
+            const uPrice = Number(item.unitPrice || 0);
+            const manualCost = Math.round(uPrice * 0.8 * 100) / 100;
+            (item as any).costPrice = manualCost;
+            if (item.product) {
+              item.product.costPrice = manualCost;
+            }
+          }
         }
       }
     }
@@ -573,6 +590,8 @@ export class PosService {
     branchId: number,
     startDate?: string,
     endDate?: string,
+    startDay?: string,
+    endDay?: string,
   ) {
     const qb = this.saleRepository
       .createQueryBuilder('sale')
@@ -723,6 +742,37 @@ export class PosService {
     supplierPayQb.orderBy('ledger.createdAt', 'DESC');
     const supplierPayments = await supplierPayQb.getMany().catch(() => []);
 
+    // Query sub-treasury daily revenues (manual revenues from downstairs shop)
+    const subTreasuryQb = this.dataSource
+      .getRepository(BranchDailyRevenue)
+      .createQueryBuilder('rev')
+      .where('rev.branchId = :branchId', { branchId });
+
+    const effectiveStartDay =
+      startDay ||
+      (startDate
+        ? new Date(new Date(startDate).getTime() + 2 * 3600 * 1000).toISOString().split('T')[0]
+        : undefined);
+    const effectiveEndDay =
+      endDay ||
+      (endDate
+        ? new Date(new Date(endDate).getTime() + 2 * 3600 * 1000).toISOString().split('T')[0]
+        : undefined);
+
+    if (effectiveStartDay) {
+      subTreasuryQb.andWhere('rev.revenueDate >= :startDay', { startDay: effectiveStartDay });
+    }
+    if (effectiveEndDay) {
+      subTreasuryQb.andWhere('rev.revenueDate <= :endDay', { endDay: effectiveEndDay });
+    }
+    subTreasuryQb.orderBy('rev.revenueDate', 'DESC').addOrderBy('rev.createdAt', 'DESC');
+    const subTreasuryRevenues = await subTreasuryQb.getMany().catch(() => []);
+
+    let totalSubTreasury = 0;
+    for (const rev of subTreasuryRevenues) {
+      totalSubTreasury += Number(rev.totalAmount || 0);
+    }
+
     let totalExpenses = 0;
     for (const exp of expenses) {
       totalExpenses += Number(exp.amount || 0);
@@ -736,11 +786,16 @@ export class PosService {
     const totalOutflows = totalExpenses + totalSupplierPayments;
     const totalCollected = cash + instapay + wallet + card;
     const netTreasuryCash = cash - totalOutflows;
-    const netTreasuryTotal = totalCollected - totalOutflows;
+    const totalDrawerCash = cash + totalSubTreasury;
+    const netDrawerCash = totalDrawerCash - totalOutflows;
+    const netTreasuryTotal = totalCollected + totalSubTreasury - totalOutflows;
 
     return {
       totals: {
         cash,
+        subTreasuryCash: totalSubTreasury,
+        totalDrawerCash,
+        netDrawerCash,
         instapay,
         wallet,
         card,
@@ -753,11 +808,13 @@ export class PosService {
         netTreasuryCash,
         netTreasuryTotal,
         invoicesCount: sales.length,
+        subTreasuryCount: subTreasuryRevenues.length,
         expensesCount: expenses.length,
         supplierPaymentsCount: supplierPayments.length,
       },
       counts: {
         cash: cashCount,
+        subTreasury: subTreasuryRevenues.length,
         instapay: instapayCount,
         wallet: walletCount,
         card: cardCount,
@@ -767,6 +824,7 @@ export class PosService {
       },
       sales,
       debtPayments: externalDebtPayments,
+      subTreasuryRevenues,
       expenses,
       supplierPayments,
     };

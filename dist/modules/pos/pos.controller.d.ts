@@ -39,9 +39,12 @@ export declare class PosController {
             creditTotal: number;
         };
     }>;
-    getTreasuryReport(branchId?: number, startDate?: string, endDate?: string): Promise<{
+    getTreasuryReport(branchId?: number, startDate?: string, endDate?: string, startDay?: string, endDay?: string): Promise<{
         totals: {
             cash: number;
+            subTreasuryCash: number;
+            totalDrawerCash: number;
+            netDrawerCash: number;
             instapay: number;
             wallet: number;
             card: number;
@@ -54,11 +57,13 @@ export declare class PosController {
             netTreasuryCash: number;
             netTreasuryTotal: number;
             invoicesCount: number;
+            subTreasuryCount: number;
             expensesCount: number;
             supplierPaymentsCount: number;
         };
         counts: {
             cash: number;
+            subTreasury: number;
             instapay: number;
             wallet: number;
             card: number;
@@ -68,6 +73,7 @@ export declare class PosController {
         };
         sales: import("../../database/entities/branch-sale.entity").BranchSale[];
         debtPayments: import("../../database/entities/customer-debt-ledger.entity").CustomerDebtLedger[];
+        subTreasuryRevenues: import("../../database/entities/branch-daily-revenue.entity").BranchDailyRevenue[] | never[];
         expenses: import("../../database/entities/branch-expense.entity").BranchExpense[] | never[];
         supplierPayments: never[] | import("../../database/entities/supplier-debt-ledger.entity").SupplierDebtLedger[];
     }>;

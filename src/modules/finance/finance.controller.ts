@@ -184,5 +184,14 @@ export class FinanceController {
   ) {
     return this.financeService.addBranchDailyRevenue(branchId, data);
   }
+
+  @Delete('branch-revenues/:branchId/:id')
+  @UseGuards(BranchScopeGuard)
+  async deleteBranchDailyRevenue(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.financeService.deleteBranchDailyRevenue(id, branchId);
+  }
 }
 
